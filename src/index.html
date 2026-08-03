@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Todo</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Top bar: drag region + window controls -->
+      <header class="topbar" data-tauri-drag-region>
+        <div class="topbar-text" data-tauri-drag-region>
+          <span class="topbar-title" data-tauri-drag-region>To&nbsp;Do</span>
+          <span class="topbar-date" id="topbar-date" data-tauri-drag-region></span>
+        </div>
+        <div class="win-controls">
+          <button class="win-btn win-tags" id="btn-tags" title="Tags" aria-label="Tags">
+            <svg viewBox="0 0 12 12"><line x1="2.5" y1="4" x2="9.5" y2="4" /><line x1="2.5" y1="6.5" x2="9.5" y2="6.5" /><line x1="2.5" y1="9" x2="6.5" y2="9" /></svg>
+          </button>
+          <button class="win-btn" id="btn-settings" title="Settings" aria-label="Settings">
+            <svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="2.1" /><path d="M7 1.4 v1.7 M7 10.9 v1.7 M1.4 7 h1.7 M10.9 7 h1.7 M3 3 l1.2 1.2 M9.8 9.8 l1.2 1.2 M11 3 l-1.2 1.2 M4.2 9.8 L3 11" /></svg>
+          </button>
+          <button class="win-btn" id="btn-min" title="Minimize" aria-label="Minimize">
+            <svg viewBox="0 0 10 10"><line x1="1.5" y1="5" x2="8.5" y2="5" /></svg>
+          </button>
+          <button class="win-btn win-close" id="btn-close" title="Close" aria-label="Close">
+            <svg viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" /><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" /></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Add task (collapsed by default; toggle expands it) -->
+      <section class="add" id="add-section">
+        <button type="button" class="add-toggle" id="add-toggle">
+          <span class="add-toggle-plus">+</span><span>New task</span>
+        </button>
+
+        <form class="add-form" id="add-form" hidden>
+          <input class="add-title" id="f-title" type="text" placeholder="What needs doing?" autocomplete="off" />
+          <textarea class="add-note" id="f-note" rows="2" placeholder="Note (optional)"></textarea>
+          <input class="add-link" id="f-link" type="text" placeholder="Link / URL (optional)" autocomplete="off" />
+
+          <!-- Tags: type to search/reuse, Enter to add a chip -->
+          <div class="chip-field">
+            <div class="chips" id="f-tags-chips"></div>
+            <input class="chip-input" id="f-tag" list="tag-suggestions" placeholder="# tag — type to search, Enter to add" autocomplete="off" />
+            <datalist id="tag-suggestions"></datalist>
+          </div>
+
+          <!-- References: pick existing tasks -->
+          <div class="ref-field">
+            <select class="ref-select" id="f-ref">
+              <option value="">↳ Reference a task…</option>
+            </select>
+            <div class="chips" id="f-refs-chips"></div>
+          </div>
+
+          <!-- Priority: none / low / medium / high -->
+          <div class="prio-row">
+            <span class="prio-label">Priority</span>
+            <div class="prio-seg" id="f-prio">
+              <button type="button" data-prio="">None</button>
+              <button type="button" class="opt-low" data-prio="low">Low</button>
+              <button type="button" class="opt-med" data-prio="med">Med</button>
+              <button type="button" class="opt-high" data-prio="high">High</button>
+            </div>
+          </div>
+
+          <div class="add-row">
+            <input class="add-date" id="f-due" type="date" />
+            <div class="add-actions">
+              <button type="button" class="btn-ghost" id="f-cancel">Cancel</button>
+              <button type="submit" class="btn-primary" id="f-save">Add</button>
+              <button type="button" class="btn-ghost" id="f-done" hidden>Done</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <!-- Scroll area: list view OR tag panel -->
+      <main class="scroll">
+        <div id="list-view">
+          <div class="sortbar" id="sortbar">
+            <span class="sortbar-label">Sort</span>
+            <div class="sort-seg" id="sort-seg">
+              <button type="button" data-sort="due">Due date</button>
+              <button type="button" data-sort="priority">Priority</button>
+              <button type="button" data-sort="tag">Tag</button>
+              <button type="button" data-sort="added">Added</button>
+            </div>
+          </div>
+
+          <ul class="list" id="list"></ul>
+
+          <p class="empty" id="empty" hidden>Nothing here yet.<br /><span>Add your first task above.</span></p>
+
+          <div class="done-block" id="done-block" hidden>
+            <button class="done-toggle" id="done-toggle">
+              <span class="chev" id="done-chev">▸</span>
+              <span>Done</span>
+              <span class="done-count" id="done-count">0</span>
+            </button>
+            <ul class="list done-list" id="done-list" hidden></ul>
+          </div>
+        </div>
+
+        <div id="tag-panel" hidden>
+          <div class="panel-head">
+            <button class="panel-back" id="tag-back" title="Back to list">‹</button>
+            <span class="panel-title">Tags</span>
+          </div>
+          <div id="tag-list"></div>
+          <p class="empty" id="tag-empty" hidden>No tags yet.<br /><span>Add a # tag to a task.</span></p>
+        </div>
+
+        <div id="settings-panel" hidden>
+          <div class="panel-head">
+            <button class="panel-back" id="settings-back" title="Back to list">‹</button>
+            <span class="panel-title">Settings</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Theme</span>
+            <div class="segmented" id="theme-seg">
+              <button type="button" data-theme-pref="light">Light</button>
+              <button type="button" data-theme-pref="dark">Dark</button>
+              <button type="button" data-theme-pref="system">System</button>
+            </div>
+          </div>
+
+          <!-- Cloud sync: paste the Neon connection string once per machine -->
+          <div class="setting-block">
+            <div class="setting-block-head">
+              <span class="setting-label">Cloud sync</span>
+              <span class="sync-dot" id="sync-dot"></span>
+            </div>
+            <input
+              class="setting-input"
+              id="f-dburl"
+              type="password"
+              placeholder="postgresql://…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div class="setting-actions">
+              <button type="button" class="btn-ghost btn-sm" id="btn-sync">Sync now</button>
+              <button type="button" class="btn-primary btn-sm" id="btn-dburl-save">Save</button>
+            </div>
+            <div class="sync-status" id="sync-status"></div>
+          </div>
+        </div>
+      </main>
+
+      <!-- Resize grip -->
+      <div class="resize-grip" id="resize-grip" title="Drag to resize">
+        <svg viewBox="0 0 12 12"><path d="M11 5 L5 11 M11 9 L9 11" /></svg>
+      </div>
+    </div>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
