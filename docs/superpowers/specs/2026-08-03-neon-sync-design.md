@@ -137,16 +137,19 @@ than 30 days are purged locally and remotely.
 
 ### Refresh triggers
 
-Launch, a 5-second poll, and window focus. The poll means a window left open on
+Launch, a 60-second poll, and window focus. The poll means a window left open on
 one machine reflects the other machine's edits without being touched; focus
 covers the case of returning to a machine that has been idle.
 
 Overlapping syncs are skipped rather than queued — on a slow connection a sync
 can outlast the interval, and stacking them would only pile up work.
 
-Trade-off: a 5-second poll keeps Neon's compute from auto-suspending, so an open
-window consumes compute hours continuously. The interval is a single constant
-(`POLL_MS` in `src/sync.js`) so it is cheap to raise if usage becomes a concern.
+Trade-off: any poll more frequent than Neon's auto-suspend window (5 minutes by
+default) keeps its compute awake, so an open window consumes compute hours
+continuously. Interval length changes query volume but not that fact — only
+crossing the auto-suspend threshold does. The interval is a single constant
+(`POLL_MS` in `src/sync.js`), and `0` disables polling entirely in favour of
+launch and focus.
 
 Because most polls are no-ops, two things are throttled so the interval does not
 turn idle time into constant work:

@@ -92,8 +92,8 @@ impl SyncState {
         }
     }
 
-    /// Whether a tombstone sweep is due. At a 5s poll this is true roughly once
-    /// an hour instead of 720 times.
+    /// Whether a tombstone sweep is due. At a 60s poll this is true roughly
+    /// once an hour instead of 60 times.
     fn purge_due(&self) -> bool {
         let mut last = self.last_purge.lock().unwrap();
         let now = Utc::now();
@@ -289,8 +289,8 @@ pub async fn run_sync(state: &SyncState) -> Status {
         Ok(outcome) => {
             state.set_state("ok", None);
             state.status.lock().unwrap().changed = outcome.changed;
-            // At a 5s poll most runs are no-ops; skip rewriting the cache file
-            // when nothing about the list moved.
+            // Most polls are no-ops; skip rewriting the cache file when nothing
+            // about the list moved.
             if outcome.touched_todos {
                 let _ = state.save_todos();
             }

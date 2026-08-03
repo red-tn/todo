@@ -9,12 +9,15 @@ database.
 The app is local-first. Every edit writes to a local cache and returns
 immediately, so the list keeps working with no network at all. Changed rows are
 flagged and pushed to Neon on the next successful sync; remote changes are
-pulled on launch, every 5 seconds, and whenever the window regains focus.
+pulled on launch, every 60 seconds, and whenever the window regains focus.
 
-> **Note on Neon usage:** polling every 5 seconds keeps the Neon compute from
-> auto-suspending, so an open window consumes compute hours continuously. If you
-> are on the free tier, either keep an eye on the usage dashboard or raise
-> `POLL_MS` in `src/sync.js`.
+> **Note on Neon usage:** any poll more frequent than Neon's auto-suspend window
+> (5 minutes by default) keeps the compute awake, so an open window consumes
+> compute hours continuously. The 60-second interval cuts query volume but does
+> **not** change that — only an interval longer than the auto-suspend threshold
+> would. To actually reduce compute hours, either raise `POLL_MS` in
+> `src/sync.js` above 5 minutes or set it to `0` to disable polling and rely on
+> launch and window focus alone.
 
 Conflicts resolve by last write, with two rules that keep it predictable:
 

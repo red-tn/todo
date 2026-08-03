@@ -8,8 +8,14 @@ const invoke = window.__TAURI__.core.invoke;
 const listen = window.__TAURI__.event.listen;
 const appWindow = window.__TAURI__.window.getCurrentWindow();
 
-/** How often to poll the database for changes made on another machine. */
-const POLL_MS = 5000;
+/**
+ * How often to poll the database for changes made on another machine.
+ *
+ * Set to 0 to disable polling and rely on launch and window focus alone. Note
+ * that any interval shorter than Neon's auto-suspend window (5 minutes by
+ * default) keeps its compute awake, whatever the value.
+ */
+const POLL_MS = 60000;
 
 let status = { state: "unconfigured", host: null, pending: 0, lastSync: null, error: null };
 const listeners = [];
@@ -94,7 +100,7 @@ export function describe(s) {
 /**
  * Start listening for status changes and keep the list fresh.
  *
- * Three triggers: a 5s poll so an open window updates itself, window focus for
+ * Three triggers: a 60s poll so an open window updates itself, window focus for
  * the moment you come back to a machine, and the status events Rust emits after
  * its own background syncs.
  */
@@ -120,5 +126,5 @@ export async function initSync() {
     if (focused) syncNow();
   });
 
-  setInterval(syncNow, POLL_MS);
+  if (POLL_MS > 0) setInterval(syncNow, POLL_MS);
 }
