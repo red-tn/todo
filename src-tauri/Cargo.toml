@@ -22,7 +22,9 @@ tauri-build = { version = "2", features = [] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# macos-private-api backs the transparent window on macOS; it is a no-op on
+# other platforms and must match `macOSPrivateApi` in tauri.conf.json.
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
