@@ -30,44 +30,129 @@ Deletes travel as tombstones rather than missing rows, so deleting on one
 machine doesn't get undone by the other machine's copy. Tombstones are cleaned
 up after 30 days.
 
-## Setup on a new machine
+## Installation
 
-### 1. Prerequisites
+> **There is no cross-compilation.** Tauri produces a native binary linked
+> against each platform's SDK, so the Windows installer must be built on
+> Windows and the macOS app must be built on a Mac. Building one from the other
+> is not possible; each machine builds its own, or a macOS CI runner builds the
+> Mac one (see [Building the Mac app from CI](#building-the-mac-app-from-ci)).
 
-- [Rust](https://rustup.rs/)
-- **macOS:** Xcode command line tools — `xcode-select --install`
-- **Windows:** the MSVC build tools and WebView2 (both come with a normal Rust +
-  Visual Studio Build Tools install)
-- Node, only for the Tauri CLI — `npm install`
+Both platforms share the same first two steps.
 
-### 2. Build
+### Common prerequisites
+
+- [Rust](https://rustup.rs/) — `rustup` installs everything needed
+- [Node.js](https://nodejs.org/) — used only to run the Tauri CLI
 
 ```sh
+git clone https://github.com/red-tn/todo.git
+cd todo
 npm install
+```
+
+---
+
+### Windows
+
+**Prerequisites**
+
+- **Microsoft C++ Build Tools** — install the "Desktop development with C++"
+  workload from [the Visual Studio Build Tools
+  installer](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+- **WebView2** — already present on Windows 10 1803+ and Windows 11. On older
+  builds, install the [Evergreen
+  Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
+
+**Build**
+
+```sh
 npm run tauri build
 ```
 
-Tauri only builds the current platform's targets: an NSIS installer on Windows,
-a `.dmg` and `.app` on macOS. Output lands in
-`src-tauri/target/release/bundle/`.
+**Install**
 
-For development, `npm run tauri dev` runs it without bundling.
+The installer lands at:
 
-### 3. First launch on macOS
+```
+src-tauri/target/release/bundle/nsis/Todo_0.1.0_x64-setup.exe
+```
 
-The app is not code-signed, so Gatekeeper will refuse a normal double-click.
-Right-click the app and choose **Open**, then confirm. This is only needed once.
+Run it. It installs per-user (no admin prompt) and adds *Todo* to the Start
+menu. The standalone binary is also at
+`src-tauri/target/release/Todo.exe` if you would rather not install.
 
-### 4. Connect it to the database
+---
 
-Open **Settings** (the gear in the title bar), paste the Neon connection string
-into **Cloud sync**, and press **Save**. The string is validated by actually
-connecting before it's saved, so a typo tells you immediately.
+### macOS
+
+**Prerequisites**
+
+- **Xcode command line tools** — `xcode-select --install`
+
+**Build**
+
+```sh
+npm run tauri build
+```
+
+On Apple Silicon this produces an arm64 build; on Intel, x86_64. For one bundle
+that runs on both:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri build -- --target universal-apple-darwin
+```
+
+**Install**
+
+The disk image lands at:
+
+```
+src-tauri/target/release/bundle/dmg/Todo_0.1.0_aarch64.dmg
+```
+
+Open it and drag **Todo** to Applications. The raw `.app` is also at
+`src-tauri/target/release/bundle/macos/Todo.app`.
+
+**First launch — this step is required.** The app is not code-signed or
+notarized, so double-clicking it gives *"Todo" cannot be opened because the
+developer cannot be verified*. To get past it, **right-click the app and choose
+Open**, then click **Open** in the dialog. macOS remembers the exception, so
+this is a one-time step.
+
+If macOS refuses even after that (Sequoia and later are stricter), clear the
+quarantine flag:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Todo.app
+```
+
+---
+
+### Connect it to the database
+
+Same on both platforms. Open **Settings** (the gear in the title bar), paste the
+Neon connection string into **Cloud sync**, and press **Save**. The string is
+validated by actually connecting before it is saved, so a typo tells you
+immediately.
 
 On its first successful connect, a machine adopts the shared list from the
 database. Whatever was in its local file beforehand is copied to
 `todos.local-backup-<timestamp>.json` in the app data directory first — nothing
 is thrown away.
+
+### Development
+
+`npm run tauri dev` runs the app without bundling and reloads on frontend
+changes. Note that it runs a debug build, which is slower to start.
+
+### Building the Mac app from CI
+
+If you want a `.dmg` without building on a Mac, a GitHub Actions workflow using
+a `macos-latest` runner can produce one and attach it to a release. Be aware
+that GitHub bills macOS runner minutes at 10× the Linux rate, which consumes a
+private repository's included minutes quickly.
 
 ## Where things live
 
@@ -110,8 +195,9 @@ cargo test                                    # merge logic, URL masking, legacy
 TODO_TEST_DATABASE_URL=<url> cargo test -- --ignored   # round-trip against a real database
 ```
 
-The integration tests only touch rows whose id starts with `zz-test-`, so they
-are safe to run against the live database.
+The integration tests only touch rows whose id starts with `zz-` (`zz-test-` for
+the query round-trips, `zz-sync-` for the end-to-end sync cases) and clean up
+after themselves, so they are safe to run against the live database.
 
 ## Recommended IDE setup
 
