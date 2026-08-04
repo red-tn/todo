@@ -1,0 +1,77 @@
+name: release
+
+# Cut a release by pushing a version tag:
+#   npm run release -- 0.2.0
+#
+# Builds Windows and macOS (Apple Silicon and Intel), signs the updater
+# artifacts, and publishes a GitHub Release containing latest.json — which is
+# the endpoint installed apps poll.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+            name: macOS (Apple Silicon)
+          - platform: macos-latest
+            args: '--target x86_64-apple-darwin'
+            name: macOS (Intel)
+          - platform: windows-latest
+            args: ''
+            name: Windows
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run tests
+        working-directory: src-tauri
+        # Only the offline tests: the --ignored ones need a live database, and
+        # the credential does not belong in CI.
+        run: cargo test --lib
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Todo ${{ github.ref_name }}'
+          releaseBody: 'Installed copies will offer this update from Settings.'
+          # Published immediately so the updater endpoint resolves; a draft
+          # release is not reachable by `releases/latest/download`.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

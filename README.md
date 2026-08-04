@@ -142,6 +142,45 @@ database. Whatever was in its local file beforehand is copied to
 `todos.local-backup-<timestamp>.json` in the app data directory first — nothing
 is thrown away.
 
+## Updates
+
+The app checks GitHub for a newer release on launch and offers it in Settings.
+It never installs or restarts on its own — a surprise restart would discard
+whatever you were mid-way through typing — so installing is always an explicit
+button press.
+
+Updates are signed. The app refuses anything that does not verify against the
+public key baked into `tauri.conf.json`, so a spoofed endpoint cannot push code
+to your machines.
+
+### Cutting a release
+
+```sh
+npm run release -- 0.2.0
+git push && git push origin v0.2.0
+```
+
+`npm run release` bumps the version in `package.json`, `package-lock.json`,
+`tauri.conf.json`, and `Cargo.toml` together, then commits and tags. They must
+agree: if the tag and `tauri.conf.json` disagree, the updater ignores the
+release without complaining.
+
+Pushing the tag triggers `.github/workflows/release.yml`, which builds Windows
+and macOS (Apple Silicon and Intel), signs everything, and publishes a GitHub
+Release containing `latest.json` — the file installed apps poll.
+
+### Signing keys
+
+Generated once with `npm run tauri signer generate`. The **public** key lives in
+`tauri.conf.json`. The **private** key must exist in two places:
+
+- the `TAURI_SIGNING_PRIVATE_KEY` secret in the repository's Actions settings
+- a password manager
+
+**If the private key is lost, installed apps can never be updated again** —
+they only accept updates signed by the matching key, so every machine would need
+a manual reinstall. `*.key` is gitignored; keep it that way.
+
 ### Development
 
 `npm run tauri dev` runs the app without bundling and reloads on frontend

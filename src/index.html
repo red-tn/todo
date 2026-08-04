@@ -148,6 +148,21 @@
             </div>
             <div class="sync-status" id="sync-status"></div>
           </div>
+
+          <!-- Updates: checked on launch, installed only on request -->
+          <div class="setting-block">
+            <div class="setting-block-head">
+              <span class="setting-label">Updates</span>
+              <span class="sync-dot" id="update-dot"></span>
+            </div>
+            <div class="sync-status" id="update-status"></div>
+            <div class="setting-actions">
+              <button type="button" class="btn-ghost btn-sm" id="btn-check-update">Check now</button>
+              <button type="button" class="btn-primary btn-sm" id="btn-install-update" hidden>
+                Install and restart
+              </button>
+            </div>
+          </div>
         </div>
       </main>
 

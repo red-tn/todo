@@ -6,6 +6,7 @@ mod config;
 mod db;
 mod model;
 mod sync;
+mod update;
 
 use chrono::Utc;
 use model::Todo;
@@ -130,6 +131,21 @@ async fn set_db_url(app: App, url: String) -> Result<Status, String> {
     Ok(status)
 }
 
+/* ---------- updates ---------- */
+
+/// Ask GitHub whether a newer release exists. Never throws for "offline".
+#[tauri::command]
+async fn check_update(app: App) -> update::UpdateStatus {
+    update::check(&app).await
+}
+
+/// Install the pending update and restart. Called only from an explicit
+/// button press, never automatically.
+#[tauri::command]
+async fn install_update(app: App) -> Result<(), String> {
+    update::install(&app).await
+}
+
 /// Open a URL in the user's default browser.
 #[tauri::command]
 fn open_link(app: App, url: String) -> Result<(), String> {
@@ -145,6 +161,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -177,6 +195,8 @@ pub fn run() {
             sync_now,
             get_sync_status,
             set_db_url,
+            check_update,
+            install_update,
             open_link
         ])
         .run(tauri::generate_context!())

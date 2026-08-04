@@ -4,6 +4,13 @@ import { initRender, renderList, toggleTagPanel, toggleSettings } from "./render
 import { initAddForm, openEdit } from "./addform.js";
 import { initTheme, getTheme, setTheme } from "./theme.js";
 import { initSync, subscribeStatus, setDbUrl, syncNow, describe } from "./sync.js";
+import {
+  initUpdates,
+  subscribeUpdate,
+  checkForUpdate,
+  installUpdate,
+  describeUpdate,
+} from "./update.js";
 
 const appWindow = window.__TAURI__.window.getCurrentWindow();
 
@@ -78,14 +85,53 @@ function initSyncSettings() {
   sync.addEventListener("click", () => syncNow());
 }
 
+function initUpdateSettings() {
+  const line = document.getElementById("update-status");
+  const dot = document.getElementById("update-dot");
+  const check = document.getElementById("btn-check-update");
+  const install = document.getElementById("btn-install-update");
+
+  subscribeUpdate((s) => {
+    line.textContent = describeUpdate(s);
+    line.classList.toggle("is-error", s.state === "error");
+    dot.className = "sync-dot " + (s.state === "available" ? "offline" : s.state === "error" ? "error" : "ok");
+    // The install button only exists when there is genuinely something to install.
+    install.hidden = s.state !== "available";
+    check.disabled = s.state === "downloading";
+    install.disabled = s.state === "downloading";
+  });
+
+  check.addEventListener("click", async () => {
+    check.disabled = true;
+    const previous = check.textContent;
+    check.textContent = "Checking…";
+    try {
+      await checkForUpdate();
+    } finally {
+      check.disabled = false;
+      check.textContent = previous;
+    }
+  });
+
+  // The only path that restarts the app, and only ever from this click.
+  install.addEventListener("click", () => {
+    install.textContent = "Installing…";
+    installUpdate().catch(() => {
+      install.textContent = "Install and restart";
+    });
+  });
+}
+
 // type="module" scripts run after the DOM is parsed, so elements exist here.
 initTheme(); // apply saved theme before first paint
 setDate();
 initWindowChrome();
 initSettings();
 initSyncSettings();
+initUpdateSettings();
 initAddForm();
 initRender({ onToggle: toggleDone, onDelete: deleteTodo, onEdit: openEdit });
 subscribe(renderList);
 load();
 initSync();
+initUpdates();
