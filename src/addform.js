@@ -1,9 +1,8 @@
-// addform.js — the inline add/edit form (title, note, link, tags, references, due).
+// addform.js — the inline add/edit form (title, note, tags, priority, repeats, due).
 import { addTodo, updateTodo, getTodos } from "./store.js";
 
 let editingId = null;
 let formTags = [];
-let formRefs = [];
 let formPriority = ""; // "" | "low" | "med" | "high"
 let formRecur = ""; // "" | "daily" | "weekly" | "monthly" | "yearly"
 let formRecurInterval = 1;
@@ -16,12 +15,9 @@ export function initAddForm() {
   els.form = document.getElementById("add-form");
   els.title = document.getElementById("f-title");
   els.note = document.getElementById("f-note");
-  els.link = document.getElementById("f-link");
   els.tag = document.getElementById("f-tag");
   els.tagChips = document.getElementById("f-tags-chips");
   els.tagSuggest = document.getElementById("tag-suggestions");
-  els.ref = document.getElementById("f-ref");
-  els.refChips = document.getElementById("f-refs-chips");
   els.due = document.getElementById("f-due");
   els.prio = document.getElementById("f-prio");
   els.recur = document.getElementById("f-recur");
@@ -44,7 +40,6 @@ export function initAddForm() {
   // Edit mode auto-saves: text fields debounce, the date commits on change.
   els.title.addEventListener("input", scheduleCommit);
   els.note.addEventListener("input", scheduleCommit);
-  els.link.addEventListener("input", scheduleCommit);
   els.due.addEventListener("change", commitEditNow);
 
   // Priority picker: clicking a button selects that level.
@@ -87,13 +82,6 @@ export function initAddForm() {
   els.tag.addEventListener("input", () => {
     const opts = Array.from(els.tagSuggest.options).map((o) => o.value);
     if (opts.includes(els.tag.value)) commitTagInput();
-  });
-
-  els.ref.addEventListener("change", () => {
-    if (els.ref.value) {
-      addRef(els.ref.value);
-      els.ref.value = "";
-    }
   });
 }
 
@@ -153,63 +141,6 @@ function refreshTagSuggestions() {
   );
 }
 
-/* ---------- references ---------- */
-
-function addRef(id) {
-  if (!formRefs.includes(id)) {
-    formRefs.push(id);
-    renderRefChips();
-    refreshRefSelect();
-    commitEditNow();
-  }
-}
-
-function renderRefChips() {
-  const byId = new Map(getTodos().map((t) => [t.id, t]));
-  els.refChips.replaceChildren(
-    ...formRefs
-      .filter((id) => byId.has(id))
-      .map((id) => {
-        const chip = document.createElement("span");
-        chip.className = "chip ref-chip";
-        const label = document.createElement("span");
-        label.textContent = "↳ " + byId.get(id).title;
-        chip.appendChild(label);
-        const x = document.createElement("button");
-        x.type = "button";
-        x.className = "chip-x";
-        x.textContent = "×";
-        x.addEventListener("click", () => {
-          formRefs = formRefs.filter((r) => r !== id);
-          renderRefChips();
-          refreshRefSelect();
-          commitEditNow();
-        });
-        chip.appendChild(x);
-        return chip;
-      })
-  );
-}
-
-function refreshRefSelect() {
-  const options = [el("option", "↳ Reference a task…", "")];
-  for (const t of getTodos()) {
-    if (t.id === editingId) continue; // can't reference itself
-    if (formRefs.includes(t.id)) continue; // already referenced
-    if (t.done) continue; // keep the picker to active tasks
-    options.push(el("option", t.title, t.id));
-  }
-  els.ref.replaceChildren(...options);
-  els.ref.value = "";
-}
-
-function el(tag, text, value) {
-  const o = document.createElement(tag);
-  o.textContent = text;
-  if (value !== undefined) o.value = value;
-  return o;
-}
-
 /* ---------- priority ---------- */
 
 function renderPriority() {
@@ -235,10 +166,8 @@ function commitEdit() {
   updateTodo(editingId, {
     title: els.title.value,
     note: els.note.value,
-    link: els.link.value,
     due: els.due.value || null,
     tags: [...formTags],
-    refs: [...formRefs],
     priority: formPriority || null,
     recurrence: formRecur || null,
     recurrenceInterval: formRecurInterval,
@@ -305,19 +234,15 @@ export function openEdit(todo) {
   resetFields();
   els.title.value = todo.title;
   els.note.value = todo.note || "";
-  els.link.value = todo.link || "";
   els.due.value = todo.due || "";
   formTags = [...(todo.tags || [])];
-  formRefs = [...(todo.refs || [])];
   formPriority = todo.priority || "";
   formRecur = todo.recurrence || "";
   formRecurInterval = todo.recurrenceInterval || 1;
   renderTagChips();
-  renderRefChips();
   renderPriority();
   renderRecur();
   refreshTagSuggestions();
-  refreshRefSelect();
   setMode("edit"); // auto-saves from here; Done just collapses
   expand();
   els.title.focus();
@@ -327,20 +252,16 @@ export function openEdit(todo) {
 function resetFields() {
   els.title.value = "";
   els.note.value = "";
-  els.link.value = "";
   els.tag.value = "";
   els.due.value = "";
   formTags = [];
-  formRefs = [];
   formPriority = "";
   formRecur = "";
   formRecurInterval = 1;
   renderTagChips();
-  renderRefChips();
   renderPriority();
   renderRecur();
   refreshTagSuggestions();
-  refreshRefSelect();
 }
 
 /** Cancel/Escape/Done: persist any pending edit, then collapse back to the toggle. */
@@ -365,10 +286,8 @@ function onSubmit(e) {
   const data = {
     title,
     note: els.note.value,
-    link: els.link.value,
     due: els.due.value || null,
     tags: [...formTags],
-    refs: [...formRefs],
     priority: formPriority || null,
     recurrence: formRecur || null,
     recurrenceInterval: formRecurInterval,

@@ -1,16 +1,17 @@
-// render.js — sorting, due tiers, card rendering, the tag panel, and jump-to-highlight.
-const invoke = window.__TAURI__.core.invoke;
+// render.js — sorting, due tiers, card rendering, the tag filter, and the
+// tag/archive panels.
 const els = {};
 let handlers = {};
 let doneOpen = false;
-let overlay = null; // null | "tags" | "settings"
+let overlay = null; // null | "tags" | "settings" | "archive"
 let current = []; // last rendered todo list, for the tag panel
+let activeTag = null; // tag filter, session-only
 
 const SORT_KEY = "todo.sortMode";
 const SORT_MODES = ["due", "priority", "tag", "added"];
 let sortMode = "due";
 
-/** Grab element refs and wire the Done toggle + tag panel back button. */
+/** Grab element refs and wire the Done toggle, filter, and panel back buttons. */
 export function initRender(h) {
   handlers = h;
   els.listView = document.getElementById("list-view");
@@ -22,12 +23,18 @@ export function initRender(h) {
   els.doneChev = document.getElementById("done-chev");
   els.doneCount = document.getElementById("done-count");
 
+  els.filterBar = document.getElementById("filter-bar");
+  els.filterChip = document.getElementById("filter-chip");
+  els.filterClear = document.getElementById("filter-clear");
+
   els.tagPanel = document.getElementById("tag-panel");
   els.tagList = document.getElementById("tag-list");
   els.tagEmpty = document.getElementById("tag-empty");
   els.tagBack = document.getElementById("tag-back");
   els.settingsPanel = document.getElementById("settings-panel");
   els.settingsBack = document.getElementById("settings-back");
+  els.archivePanel = document.getElementById("archive-panel");
+  els.archiveBack = document.getElementById("archive-back");
 
   els.doneToggle.addEventListener("click", () => {
     doneOpen = !doneOpen;
@@ -36,6 +43,8 @@ export function initRender(h) {
   });
   els.tagBack.addEventListener("click", closeOverlay);
   els.settingsBack.addEventListener("click", closeOverlay);
+  els.archiveBack.addEventListener("click", closeOverlay);
+  els.filterClear.addEventListener("click", () => setTagFilter(null));
 
   els.sortSeg = document.getElementById("sort-seg");
   els.sortBtns = Array.from(els.sortSeg.querySelectorAll("button"));
@@ -136,17 +145,8 @@ function comparatorFor(mode) {
   }
 }
 
-/* ---------- links ---------- */
-
 function svg(viewBox, inner) {
   return `<svg viewBox="${viewBox}">${inner}</svg>`;
-}
-function normalizeUrl(raw) {
-  const s = raw.trim();
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : "https://" + s;
-}
-function displayLink(raw) {
-  return raw.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "");
 }
 
 /* ---------- recurrence ---------- */
@@ -161,7 +161,7 @@ function recurrenceLabel(t) {
 
 /* ---------- card ---------- */
 
-function itemEl(t, byId) {
+function itemEl(t) {
   const { tier, label } = t.done ? { tier: "", label: "" } : tierFor(t);
   const li = document.createElement("li");
   li.className =
@@ -195,25 +195,6 @@ function itemEl(t, byId) {
     body.appendChild(note);
   }
 
-  if (t.link) {
-    const a = document.createElement("div");
-    a.className = "item-link";
-    a.title = t.link;
-    a.innerHTML =
-      svg(
-        "0 0 14 14",
-        '<path d="M6 8 a3 3 0 0 0 4 0 l2 -2 a3 3 0 0 0 -4 -4 l-1 1 M8 6 a3 3 0 0 0 -4 0 l-2 2 a3 3 0 0 0 4 4 l1 -1" />'
-      ) + "<span></span>";
-    a.querySelector("span").textContent = displayLink(t.link);
-    a.addEventListener("click", (e) => {
-      e.stopPropagation();
-      invoke("open_link", { url: normalizeUrl(t.link) }).catch((err) =>
-        console.error("open_link failed:", err)
-      );
-    });
-    body.appendChild(a);
-  }
-
   if (!t.done && t.due) {
     const meta = document.createElement("div");
     meta.className = "item-meta";
@@ -230,27 +211,7 @@ function itemEl(t, byId) {
     body.appendChild(chip);
   }
 
-  // Reference chips → jump to the referenced task
-  const refs = (t.refs || []).filter((id) => byId.has(id));
-  if (refs.length) {
-    const row = document.createElement("div");
-    row.className = "item-refs";
-    for (const id of refs) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "ref-pill";
-      chip.textContent = "↳ " + byId.get(id).title;
-      chip.title = "Go to referenced task";
-      chip.addEventListener("click", (e) => {
-        e.stopPropagation();
-        jumpTo(id);
-      });
-      row.appendChild(chip);
-    }
-    body.appendChild(row);
-  }
-
-  // Tag chips → open the tag panel focused on that tag
+  // Tag chips → filter the list to that tag
   const tags = t.tags || [];
   if (tags.length) {
     const row = document.createElement("div");
@@ -260,9 +221,13 @@ function itemEl(t, byId) {
       chip.type = "button";
       chip.className = "tag-pill";
       chip.textContent = "#" + tag;
+      chip.classList.toggle("active", tag === activeTag);
+      chip.title = tag === activeTag ? "Clear filter" : `Show only #${tag}`;
       chip.addEventListener("click", (e) => {
         e.stopPropagation();
-        openTagPanel(tag);
+        // Clicking the tag you are already filtered by clears it, so the same
+        // gesture toggles rather than being a dead end.
+        setTagFilter(tag === activeTag ? null : tag);
       });
       row.appendChild(chip);
     }
@@ -292,21 +257,38 @@ function itemEl(t, byId) {
 
 /* ---------- list render ---------- */
 
+/** Tasks matching the active tag filter, or all of them when none is set. */
+export function applyFilter(todos, tag) {
+  if (!tag) return todos;
+  return todos.filter((t) => (t.tags || []).includes(tag));
+}
+
 export function renderList(todos) {
   current = todos;
-  const byId = new Map(todos.map((t) => [t.id, t]));
-  const active = todos.filter((t) => !t.done).sort(comparatorFor(sortMode));
-  const done = todos
+  const shown = applyFilter(todos, activeTag);
+  const active = shown.filter((t) => !t.done).sort(comparatorFor(sortMode));
+  const done = shown
     .filter((t) => t.done)
     .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
 
-  els.list.replaceChildren(...active.map((t) => itemEl(t, byId)));
-  els.empty.hidden = todos.length > 0;
+  els.filterBar.hidden = !activeTag;
+  if (activeTag) els.filterChip.textContent = "#" + activeTag;
+
+  els.list.replaceChildren(...active.map((t) => itemEl(t)));
+
+  // A filter matching nothing must not look like an empty database.
+  const nothingShown = shown.length === 0;
+  els.empty.hidden = !nothingShown;
+  if (nothingShown) {
+    els.empty.innerHTML = activeTag
+      ? `Nothing tagged #${activeTag}.<br /><span>Clear the filter to see everything.</span>`
+      : "Nothing here yet.<br /><span>Add your first task above.</span>";
+  }
 
   if (done.length) {
     els.doneBlock.hidden = false;
     els.doneCount.textContent = String(done.length);
-    els.doneList.replaceChildren(...done.map((t) => itemEl(t, byId)));
+    els.doneList.replaceChildren(...done.map((t) => itemEl(t)));
     els.doneList.hidden = !doneOpen;
     els.doneChev.classList.toggle("open", doneOpen);
   } else {
@@ -316,25 +298,28 @@ export function renderList(todos) {
   if (overlay === "tags") renderTagPanel();
 }
 
-/* ---------- jump + highlight ---------- */
+/* ---------- tag filter ---------- */
 
-function jumpTo(id) {
-  if (overlay) closeOverlay();
-  const li = els.list.querySelector(`[data-id="${id}"]`);
-  if (!li) return; // referenced task may be completed/filtered
-  li.scrollIntoView({ behavior: "smooth", block: "center" });
-  li.classList.remove("flash");
-  void li.offsetWidth; // restart animation
-  li.classList.add("flash");
+/**
+ * Show only tasks carrying `tag`, or everything when `null`.
+ *
+ * Deliberately not persisted: sort mode is always visibly in effect, but a
+ * filter left over from last session just looks like a list that lost its data.
+ */
+export function setTagFilter(tag) {
+  activeTag = tag;
+  if (overlay === "tags") closeOverlay();
+  renderList(current);
 }
 
-/* ---------- tag panel ---------- */
+/* ---------- overlays ---------- */
 
 function setOverlay(name) {
   overlay = name;
   els.listView.hidden = name !== null;
   els.tagPanel.hidden = name !== "tags";
   els.settingsPanel.hidden = name !== "settings";
+  els.archivePanel.hidden = name !== "archive";
 }
 function closeOverlay() {
   setOverlay(null);
@@ -350,61 +335,42 @@ export function toggleSettings() {
   setOverlay(overlay === "settings" ? null : "settings");
 }
 
-function openTagPanel(expandTag) {
-  setOverlay("tags");
-  renderTagPanel(expandTag);
+export function toggleArchive() {
+  if (overlay === "archive") return closeOverlay();
+  setOverlay("archive");
+  handlers.onOpenArchive?.();
 }
 
-function renderTagPanel(expandTag) {
-  // tag -> list of todos
-  const map = new Map();
+/* ---------- tag panel ---------- */
+
+/**
+ * A flat list of tags with counts; picking one filters the main list.
+ *
+ * The panel used to expand each tag into its tasks with a jump-and-flash into
+ * the list. Filtering answers the same question better — in the real list, with
+ * real cards — so the sublists are gone.
+ */
+function renderTagPanel() {
+  const counts = new Map();
   for (const t of current) {
-    for (const tag of t.tags || []) {
-      if (!map.has(tag)) map.set(tag, []);
-      map.get(tag).push(t);
-    }
+    for (const tag of t.tags || []) counts.set(tag, (counts.get(tag) || 0) + 1);
   }
-  const tags = [...map.keys()].sort(
-    (a, b) => map.get(b).length - map.get(a).length || a.localeCompare(b)
+  const tags = [...counts.keys()].sort(
+    (a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b)
   );
 
   els.tagEmpty.hidden = tags.length > 0;
   els.tagList.replaceChildren(
     ...tags.map((tag) => {
-      const items = map.get(tag);
-      const entry = document.createElement("div");
-      entry.className = "tag-entry";
-
       const row = document.createElement("button");
       row.type = "button";
-      row.className = "tag-row";
-      row.innerHTML =
-        '<span class="tchev">▸</span><span class="tname"></span><span class="tag-count"></span>';
+      row.className = "tag-row" + (tag === activeTag ? " active" : "");
+      row.innerHTML = '<span class="tname"></span><span class="tag-count"></span>';
       row.querySelector(".tname").textContent = "#" + tag;
-      row.querySelector(".tag-count").textContent = String(items.length);
-
-      const list = document.createElement("ul");
-      list.className = "tag-todos";
-      list.hidden = tag !== expandTag;
-      if (tag === expandTag) row.querySelector(".tchev").classList.add("open");
-
-      for (const t of items) {
-        const li = document.createElement("li");
-        li.className = "tag-todo" + (t.done ? " is-done" : "");
-        li.textContent = t.title;
-        li.title = "Go to task";
-        li.addEventListener("click", () => jumpTo(t.id));
-        list.appendChild(li);
-      }
-
-      row.addEventListener("click", () => {
-        const open = list.hidden;
-        list.hidden = !open;
-        row.querySelector(".tchev").classList.toggle("open", open);
-      });
-
-      entry.append(row, list);
-      return entry;
+      row.querySelector(".tag-count").textContent = String(counts.get(tag));
+      row.title = `Show only #${tag}`;
+      row.addEventListener("click", () => setTagFilter(tag));
+      return row;
     })
   );
 }

@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 const TOMBSTONE_TTL_DAYS: i64 = 30;
+/// Completed tasks drop out of the working list after this long.
+pub const ARCHIVE_AFTER_DAYS: i64 = 30;
 /// Mutations arrive in bursts (the edit form autosaves on a 300ms debounce), so
 /// a sync is scheduled rather than fired per keystroke.
 const SYNC_DEBOUNCE_MS: u64 = 1500;
@@ -106,13 +108,24 @@ impl SyncState {
         }
     }
 
-    /// Rows the frontend should see: live, never tombstones.
+    /// Rows the working list should see: neither deleted nor archived.
     pub fn live_todos(&self) -> Vec<Todo> {
         self.todos
             .lock()
             .unwrap()
             .iter()
-            .filter(|t| !t.is_deleted())
+            .filter(|t| t.is_live())
+            .cloned()
+            .collect()
+    }
+
+    /// Rows for the archive panel: archived, but not deleted.
+    pub fn archived_todos(&self) -> Vec<Todo> {
+        self.todos
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| t.is_archived() && !t.is_deleted())
             .cloned()
             .collect()
     }
@@ -244,6 +257,29 @@ pub fn merge(local: &mut Vec<Todo>, remote: Vec<Todo>) -> MergeStats {
         }
     }
     stats
+}
+
+/// Move completed tasks that have sat untouched out of the working list.
+///
+/// Completing a task sets `updated_at` and nothing touches it afterwards, so
+/// "done and not modified for N days" is a good enough stand-in for "completed
+/// N days ago" without carrying a separate completion timestamp.
+///
+/// Pass `days = 0` for the manual "archive all done" action, which should not
+/// wait for anything to age.
+pub fn archive_completed(local: &mut [Todo], days: i64, now: DateTime<Utc>) -> usize {
+    let cutoff = now - chrono::Duration::days(days.max(0));
+    let mut archived = 0;
+    for t in local.iter_mut() {
+        let eligible = t.done && !t.is_archived() && !t.is_deleted() && t.stamp() <= cutoff;
+        if eligible {
+            t.archived_at = Some(now);
+            t.updated_at = Some(now);
+            t.dirty = true;
+            archived += 1;
+        }
+    }
+    archived
 }
 
 /// Drop tombstones old enough that every machine has seen them.
@@ -386,20 +422,21 @@ async fn sync_inner(state: &SyncState, pool: &PgPool) -> Result<Outcome, String>
         state.meta.lock().unwrap().last_sync = Some(server_now);
     }
 
-    // 4. Sweep expired tombstones, at most hourly — this is a write on both
-    //    sides and has no business running on every poll.
-    let mut purged = 0;
+    // 4. Housekeeping, at most hourly — both of these write, and neither has
+    //    any business running on every poll.
+    let mut swept = 0;
     if state.purge_due() {
-        purged = {
+        swept = {
             let mut t = state.todos.lock().unwrap();
-            purge_local_tombstones(&mut t)
+            let archived = archive_completed(&mut t, ARCHIVE_AFTER_DAYS, Utc::now());
+            archived + purge_local_tombstones(&mut t)
         };
         let _ = db::purge_tombstones(pool).await;
     }
 
     Ok(Outcome {
         changed,
-        touched_todos: changed || pushed_any || purged > 0,
+        touched_todos: changed || pushed_any || swept > 0,
     })
 }
 
@@ -430,16 +467,13 @@ mod tests {
         Todo {
             id: id.into(),
             title: title.into(),
-            note: String::new(),
-            link: None,
-            due: None,
+            note: String::new(),            due: None,
             priority: None,
             done: false,
-            tags: vec![],
-            refs: vec![],
-            created_at: at(0),
+            tags: vec![],            created_at: at(0),
             updated_at: Some(at(updated)),
             deleted_at: None,
+            archived_at: None,
             dirty: false,
             recurrence: None,
             recurrence_interval: 1,
@@ -520,6 +554,83 @@ mod tests {
         merge(&mut local, vec![todo("a", "changed", 20)]);
         assert_eq!(local[0].title, "changed");
         assert_eq!(local[1].title, "keep too");
+    }
+
+    /* ---------- archiving ---------- */
+
+    fn done_todo(id: &str, stamp_secs: i64) -> Todo {
+        let mut t = todo(id, id, stamp_secs);
+        t.done = true;
+        t
+    }
+
+    #[test]
+    fn completed_tasks_archive_once_they_have_aged() {
+        let now = Utc::now();
+        let old = (now - chrono::Duration::days(45)).timestamp();
+        let mut local = vec![done_todo("stale", old)];
+
+        assert_eq!(archive_completed(&mut local, 30, now), 1);
+        assert!(local[0].is_archived());
+        assert!(local[0].dirty, "archiving must be pushed to the other machine");
+    }
+
+    #[test]
+    fn recently_completed_tasks_stay_in_the_list() {
+        let now = Utc::now();
+        let recent = (now - chrono::Duration::days(3)).timestamp();
+        let mut local = vec![done_todo("fresh", recent)];
+
+        assert_eq!(archive_completed(&mut local, 30, now), 0);
+        assert!(!local[0].is_archived());
+    }
+
+    #[test]
+    fn unfinished_tasks_are_never_archived_however_old() {
+        let now = Utc::now();
+        let ancient = (now - chrono::Duration::days(400)).timestamp();
+        let mut local = vec![todo("still open", "still open", ancient)];
+
+        assert_eq!(archive_completed(&mut local, 30, now), 0);
+        assert!(!local[0].is_archived(), "an old open task is still work to do");
+    }
+
+    #[test]
+    fn already_archived_tasks_are_left_alone() {
+        let now = Utc::now();
+        let old = (now - chrono::Duration::days(45)).timestamp();
+        let mut local = vec![done_todo("stale", old)];
+        local[0].archived_at = Some(now - chrono::Duration::days(10));
+        local[0].dirty = false;
+
+        assert_eq!(archive_completed(&mut local, 30, now), 0);
+        assert!(!local[0].dirty, "re-archiving would push a pointless update");
+    }
+
+    #[test]
+    fn tombstones_are_not_archived() {
+        let now = Utc::now();
+        let old = (now - chrono::Duration::days(45)).timestamp();
+        let mut local = vec![done_todo("deleted", old)];
+        local[0].deleted_at = Some(now);
+
+        assert_eq!(archive_completed(&mut local, 30, now), 0);
+        assert!(!local[0].is_archived(), "a deleted task should not also be archived");
+    }
+
+    #[test]
+    fn zero_days_archives_everything_done_for_the_manual_action() {
+        let now = Utc::now();
+        let mut local = vec![
+            done_todo("just finished", now.timestamp()),
+            done_todo("finished last week", (now - chrono::Duration::days(7)).timestamp()),
+            todo("open", "open", now.timestamp()),
+        ];
+
+        assert_eq!(archive_completed(&mut local, 0, now), 2);
+        assert!(local[0].is_archived());
+        assert!(local[1].is_archived());
+        assert!(!local[2].is_archived(), "the open task must survive");
     }
 
     #[test]

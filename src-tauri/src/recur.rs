@@ -91,17 +91,14 @@ pub fn next_instance(done: &Todo, today: NaiveDate, new_id: String) -> Option<To
         id: new_id,
         title: done.title.clone(),
         note: done.note.clone(),
-        link: done.link.clone(),
         due: Some(next_due.format("%Y-%m-%d").to_string()),
         priority: done.priority.clone(),
         done: false,
         tags: done.tags.clone(),
-        // References point at specific tasks and rarely stay meaningful for the
-        // next occurrence, so the successor starts without them.
-        refs: Vec::new(),
         created_at: chrono::Utc::now(),
         updated_at: Some(chrono::Utc::now()),
         deleted_at: None,
+        archived_at: None,
         dirty: true,
         recurrence: done.recurrence.clone(),
         recurrence_interval: done.recurrence_interval,
@@ -121,15 +118,14 @@ mod tests {
             id: "a".into(),
             title: "Pay the bills".into(),
             note: "every month".into(),
-            link: None,
             due: due.map(|s| s.to_string()),
             priority: Some("high".into()),
             done: true,
             tags: vec!["expenses".into()],
-            refs: vec!["some-other-task".into()],
             created_at: chrono::Utc::now(),
             updated_at: None,
             deleted_at: None,
+            archived_at: None,
             dirty: false,
             recurrence: Some(unit.into()),
             recurrence_interval: interval,
@@ -203,7 +199,7 @@ mod tests {
         assert!(!next.done, "the successor starts open");
         assert!(next.dirty, "must be queued for push");
         assert_eq!(next.recurrence.as_deref(), Some("monthly"));
-        assert!(next.refs.is_empty(), "references do not carry to the next one");
+        assert!(!next.is_archived(), "a fresh occurrence is not archived");
     }
 
     #[test]

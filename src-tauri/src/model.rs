@@ -14,8 +14,6 @@ pub struct Todo {
     pub title: String,
     #[serde(default)]
     pub note: String,
-    #[serde(default)]
-    pub link: Option<String>,
     /// Due date as "YYYY-MM-DD", matching the frontend's `<input type="date">`.
     #[serde(default)]
     pub due: Option<String>,
@@ -26,8 +24,6 @@ pub struct Todo {
     pub done: bool,
     #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(default)]
-    pub refs: Vec<String>,
     #[serde(default = "Utc::now")]
     pub created_at: DateTime<Utc>,
 
@@ -48,6 +44,10 @@ pub struct Todo {
     /// sees it.
     #[serde(default)]
     pub deleted_at: Option<DateTime<Utc>>,
+    /// Set once a completed task has aged out of the working list. Archived
+    /// tasks still sync and can be restored; they are simply not shown.
+    #[serde(default)]
+    pub archived_at: Option<DateTime<Utc>>,
     /// Local-only: this row has unpushed changes. Never sent to the database.
     #[serde(default, skip_serializing_if = "is_false")]
     pub dirty: bool,
@@ -71,5 +71,14 @@ impl Todo {
 
     pub fn is_deleted(&self) -> bool {
         self.deleted_at.is_some()
+    }
+
+    pub fn is_archived(&self) -> bool {
+        self.archived_at.is_some()
+    }
+
+    /// Shown in the working list: not deleted, not archived.
+    pub fn is_live(&self) -> bool {
+        !self.is_deleted() && !self.is_archived()
     }
 }

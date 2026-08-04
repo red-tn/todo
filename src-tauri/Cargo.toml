@@ -25,7 +25,6 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # macos-private-api backs the transparent window on macOS; it is a no-op on
 # other platforms and must match `macOSPrivateApi` in tauri.conf.json.
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
-tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-process = "2"
 tauri-plugin-autostart = "2"

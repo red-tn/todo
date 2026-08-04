@@ -18,8 +18,14 @@
           <button class="win-btn win-tags" id="btn-tags" title="Tags" aria-label="Tags">
             <svg viewBox="0 0 12 12"><line x1="2.5" y1="4" x2="9.5" y2="4" /><line x1="2.5" y1="6.5" x2="9.5" y2="6.5" /><line x1="2.5" y1="9" x2="6.5" y2="9" /></svg>
           </button>
+          <button class="win-btn" id="btn-archive" title="Archive" aria-label="Archive">
+            <svg viewBox="0 0 14 14"><path d="M1.8 4.2 h10.4 v7.2 h-10.4 z M1.2 2.4 h11.6 v1.8 h-11.6 z M5.4 6.8 h3.2" /></svg>
+          </button>
+          <!-- The dot appears here when an update is waiting; Settings is where
+               the Install button lives, so the badge points at its own action. -->
           <button class="win-btn" id="btn-settings" title="Settings" aria-label="Settings">
             <svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="2.1" /><path d="M7 1.4 v1.7 M7 10.9 v1.7 M1.4 7 h1.7 M10.9 7 h1.7 M3 3 l1.2 1.2 M9.8 9.8 l1.2 1.2 M11 3 l-1.2 1.2 M4.2 9.8 L3 11" /></svg>
+            <span class="win-badge" id="update-badge" hidden></span>
           </button>
           <button class="win-btn" id="btn-min" title="Minimize" aria-label="Minimize">
             <svg viewBox="0 0 10 10"><line x1="1.5" y1="5" x2="8.5" y2="5" /></svg>
@@ -39,21 +45,12 @@
         <form class="add-form" id="add-form" hidden>
           <input class="add-title" id="f-title" type="text" placeholder="What needs doing?" autocomplete="off" />
           <textarea class="add-note" id="f-note" rows="2" placeholder="Note (optional)"></textarea>
-          <input class="add-link" id="f-link" type="text" placeholder="Link / URL (optional)" autocomplete="off" />
 
           <!-- Tags: type to search/reuse, Enter to add a chip -->
           <div class="chip-field">
             <div class="chips" id="f-tags-chips"></div>
             <input class="chip-input" id="f-tag" list="tag-suggestions" placeholder="# tag — type to search, Enter to add" autocomplete="off" />
             <datalist id="tag-suggestions"></datalist>
-          </div>
-
-          <!-- References: pick existing tasks -->
-          <div class="ref-field">
-            <select class="ref-select" id="f-ref">
-              <option value="">↳ Reference a task…</option>
-            </select>
-            <div class="chips" id="f-refs-chips"></div>
           </div>
 
           <!-- Priority: none / low / medium / high -->
@@ -108,16 +105,27 @@
             </div>
           </div>
 
+          <!-- Active tag filter, shown only while one is applied -->
+          <div class="filter-bar" id="filter-bar" hidden>
+            <span class="filter-chip" id="filter-chip"></span>
+            <button type="button" class="filter-clear" id="filter-clear" title="Clear filter">×</button>
+          </div>
+
           <ul class="list" id="list"></ul>
 
           <p class="empty" id="empty" hidden>Nothing here yet.<br /><span>Add your first task above.</span></p>
 
           <div class="done-block" id="done-block" hidden>
-            <button class="done-toggle" id="done-toggle">
-              <span class="chev" id="done-chev">▸</span>
-              <span>Done</span>
-              <span class="done-count" id="done-count">0</span>
-            </button>
+            <div class="done-head">
+              <button class="done-toggle" id="done-toggle">
+                <span class="chev" id="done-chev">▸</span>
+                <span>Done</span>
+                <span class="done-count" id="done-count">0</span>
+              </button>
+              <button type="button" class="done-archive" id="btn-archive-done" title="Move all completed tasks to the archive">
+                Archive all
+              </button>
+            </div>
             <ul class="list done-list" id="done-list" hidden></ul>
           </div>
         </div>
@@ -129,6 +137,17 @@
           </div>
           <div id="tag-list"></div>
           <p class="empty" id="tag-empty" hidden>No tags yet.<br /><span>Add a # tag to a task.</span></p>
+        </div>
+
+        <div id="archive-panel" hidden>
+          <div class="panel-head">
+            <button class="panel-back" id="archive-back" title="Back to list">‹</button>
+            <span class="panel-title">Archive</span>
+          </div>
+          <div id="archive-list"></div>
+          <p class="empty" id="archive-empty" hidden>
+            Nothing archived.<br /><span>Completed tasks move here after 30 days.</span>
+          </p>
         </div>
 
         <div id="settings-panel" hidden>

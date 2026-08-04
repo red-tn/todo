@@ -34,6 +34,7 @@ create index if not exists todos_updated_at_idx on todos (updated_at);
 -- version that needs them.
 alter table todos add column if not exists recurrence text;
 alter table todos add column if not exists recurrence_interval integer not null default 1;
+alter table todos add column if not exists archived_at timestamptz;
 "#;
 
 /// Columns to select, named explicitly.
@@ -43,8 +44,8 @@ alter table todos add column if not exists recurrence_interval integer not null 
 /// old shape then fails with "cached plan must not change result type" — which
 /// is exactly what happens on the first launch after a migration. Naming the
 /// columns keeps the result type stable when the table gains new ones.
-const COLUMNS: &str = "id, title, note, link, due, priority, done, tags, refs, \
-                       created_at, updated_at, deleted_at, recurrence, recurrence_interval";
+const COLUMNS: &str = "id, title, note, due, priority, done, tags, created_at, updated_at, \
+                       deleted_at, archived_at, recurrence, recurrence_interval";
 
 /// Open a pool. Fails fast so a bad credential surfaces as an error the user
 /// can see rather than a hang.
@@ -71,15 +72,14 @@ fn row_to_todo(row: &sqlx::postgres::PgRow) -> Result<Todo, String> {
         id: row.try_get("id").map_err(|e| e.to_string())?,
         title: row.try_get("title").map_err(|e| e.to_string())?,
         note: row.try_get("note").map_err(|e| e.to_string())?,
-        link: row.try_get("link").map_err(|e| e.to_string())?,
         due: due.map(|d| d.format("%Y-%m-%d").to_string()),
         priority: row.try_get("priority").map_err(|e| e.to_string())?,
         done: row.try_get("done").map_err(|e| e.to_string())?,
         tags: row.try_get("tags").map_err(|e| e.to_string())?,
-        refs: row.try_get("refs").map_err(|e| e.to_string())?,
         created_at: row.try_get("created_at").map_err(|e| e.to_string())?,
         updated_at: Some(row.try_get("updated_at").map_err(|e| e.to_string())?),
         deleted_at: row.try_get("deleted_at").map_err(|e| e.to_string())?,
+        archived_at: row.try_get("archived_at").map_err(|e| e.to_string())?,
         dirty: false,
         recurrence: row.try_get("recurrence").map_err(|e| e.to_string())?,
         recurrence_interval: row
@@ -142,20 +142,19 @@ pub async fn push(pool: &PgPool, todos: &[Todo]) -> Result<(), String> {
         sqlx::query(
             r#"
             insert into todos
-              (id, title, note, link, due, priority, done, tags, refs, created_at,
-               updated_at, deleted_at, recurrence, recurrence_interval)
-            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), $11, $12, $13)
+              (id, title, note, due, priority, done, tags, created_at,
+               updated_at, deleted_at, archived_at, recurrence, recurrence_interval)
+            values ($1,$2,$3,$4,$5,$6,$7,$8, now(), $9, $10, $11, $12)
             on conflict (id) do update set
               title               = excluded.title,
               note                = excluded.note,
-              link                = excluded.link,
               due                 = excluded.due,
               priority            = excluded.priority,
               done                = excluded.done,
               tags                = excluded.tags,
-              refs                = excluded.refs,
               created_at          = excluded.created_at,
               deleted_at          = excluded.deleted_at,
+              archived_at         = excluded.archived_at,
               recurrence          = excluded.recurrence,
               recurrence_interval = excluded.recurrence_interval,
               updated_at          = now()
@@ -164,14 +163,13 @@ pub async fn push(pool: &PgPool, todos: &[Todo]) -> Result<(), String> {
         .bind(&t.id)
         .bind(&t.title)
         .bind(&t.note)
-        .bind(&t.link)
         .bind(due)
         .bind(&t.priority)
         .bind(t.done)
         .bind(&t.tags)
-        .bind(&t.refs)
         .bind(t.created_at)
         .bind(t.deleted_at)
+        .bind(t.archived_at)
         .bind(&t.recurrence)
         .bind(t.recurrence_interval.max(1))
         .execute(&mut *tx)
@@ -222,15 +220,14 @@ mod tests {
             id: format!("{TEST_PREFIX}{id}"),
             title: "round-trip me".into(),
             note: "note with 'quotes' and — punctuation".into(),
-            link: Some("https://example.com/x?a=1&b=2".into()),
             due: Some("2026-06-12".into()),
             priority: Some("high".into()),
             done: true,
             tags: vec!["ai".into(), "multi word".into()],
-            refs: vec!["zz-test-other".into()],
             created_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
             updated_at: None,
             deleted_at: None,
+            archived_at: None,
             dirty: true,
             recurrence: None,
             recurrence_interval: 1,
@@ -256,14 +253,13 @@ mod tests {
 
         assert_eq!(got.title, original.title);
         assert_eq!(got.note, original.note);
-        assert_eq!(got.link, original.link);
         assert_eq!(got.due, original.due, "date must survive as YYYY-MM-DD");
         assert_eq!(got.priority, original.priority);
         assert_eq!(got.done, original.done);
         assert_eq!(got.tags, original.tags, "text[] must round-trip, spaces included");
-        assert_eq!(got.refs, original.refs);
         assert_eq!(got.created_at, original.created_at);
         assert!(got.updated_at.is_some(), "server must stamp updated_at");
+        assert_eq!(got.archived_at, original.archived_at);
         assert!(!got.dirty, "rows from the database are never dirty");
 
         cleanup(&pool).await;
@@ -328,21 +324,17 @@ mod tests {
         cleanup(&pool).await;
 
         let mut bare = sample("bare");
-        bare.link = None;
         bare.due = None;
         bare.priority = None;
         bare.tags = vec![];
-        bare.refs = vec![];
         bare.note = String::new();
         push(&pool, std::slice::from_ref(&bare)).await.expect("push");
 
         let (rows, _) = pull(&pool, None).await.expect("pull");
         let got = rows.iter().find(|r| r.id == bare.id).expect("row");
-        assert_eq!(got.link, None);
         assert_eq!(got.due, None);
         assert_eq!(got.priority, None);
         assert!(got.tags.is_empty());
-        assert!(got.refs.is_empty());
         assert_eq!(got.note, "");
 
         cleanup(&pool).await;

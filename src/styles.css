@@ -173,7 +173,7 @@ html, body {
   background: var(--accent-soft);
   border: 1px solid var(--form-border);
 }
-.add-form input, .add-form textarea, .ref-select {
+.add-form input, .add-form textarea {
   width: 100%;
   font-family: var(--font); font-size: 13px; color: var(--text);
   background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px;
@@ -181,7 +181,7 @@ html, body {
   user-select: text; cursor: text;
   transition: border-color 0.12s, box-shadow 0.12s;
 }
-.add-form input:focus, .add-form textarea:focus, .ref-select:focus {
+.add-form input:focus, .add-form textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--ring);
 }
@@ -201,8 +201,8 @@ html, body {
 .btn-ghost { background: transparent; color: var(--muted); }
 .btn-ghost:hover { background: var(--accent-soft-hover); color: var(--hover-text); }
 
-/* tag + reference chips in the form */
-.chip-field, .ref-field { display: flex; flex-direction: column; gap: 6px; }
+/* tag chips in the form */
+.chip-field { display: flex; flex-direction: column; gap: 6px; }
 .chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .chips:empty { display: none; }
 .chip {
@@ -212,10 +212,8 @@ html, body {
   background: var(--input-bg); border: 1px solid var(--input-border); color: var(--pill-text); max-width: 100%;
 }
 .tag-chip { color: var(--accent); border-color: var(--tag-chip-border); }
-.ref-chip > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip-x { border: none; background: transparent; cursor: default; font-size: 14px; line-height: 1; color: var(--label); padding: 0 1px; }
 .chip-x:hover { color: var(--danger); }
-.ref-select { cursor: default; }
 
 /* priority picker in the form */
 .prio-row { display: flex; align-items: center; gap: 10px; }
@@ -319,14 +317,6 @@ html, body {
 .today .item-meta-text { color: var(--today-text); }
 .soon  .item-meta-text { color: var(--soon-text); }
 
-.item-link {
-  display: inline-flex; align-items: center; gap: 5px; margin-top: 4px;
-  font-size: 11px; color: var(--accent); cursor: pointer;
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.item-link:hover { text-decoration: underline; }
-.item-link svg { width: 11px; height: 11px; flex: 0 0 auto; stroke: currentColor; stroke-width: 1.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.item-link span { overflow: hidden; text-overflow: ellipsis; }
 
 .item-del {
   flex: 0 0 auto; align-self: center;
@@ -340,24 +330,22 @@ html, body {
 .item-del svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 1.7; fill: none; stroke-linecap: round; }
 
 /* card tag + reference pills */
-.item-tags, .item-refs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
-.tag-pill, .ref-pill {
+.item-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.tag-pill {
   font-family: var(--font); border: none; cursor: default;
   font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 99px;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .tag-pill { background: var(--accent-soft); color: var(--accent); }
 .tag-pill:hover { background: var(--accent-soft-hover); }
-.ref-pill { background: var(--pill-bg); color: var(--pill-text); }
-.ref-pill:hover { background: var(--pill-bg-hover); color: var(--hover-text); }
-.item.is-done .item-tags, .item.is-done .item-refs { display: none; }
+.item.is-done .item-tags { display: none; }
 
 /* ===== Done ===== */
 .item.is-done { background: var(--done-bg); border-color: var(--line); }
 .item.is-done .check { background: var(--accent); border-color: var(--accent); }
 .item.is-done .check svg { opacity: 1; }
 .item.is-done .item-title { color: var(--muted); text-decoration: line-through; }
-.item.is-done .item-note, .item.is-done .item-meta, .item.is-done .item-link { display: none; }
+.item.is-done .item-note, .item.is-done .item-meta { display: none; }
 
 .done-block { margin-top: 12px; }
 .done-toggle {
@@ -391,15 +379,10 @@ html, body {
 }
 .resize-grip svg { width: 11px; height: 11px; stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; }
 
-/* ===== enter + flash animations ===== */
+/* ===== enter animation ===== */
 @keyframes pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .item.enter { animation: pop 0.18s ease; }
 
-@keyframes flash {
-  0%, 55% { box-shadow: 0 0 0 2px #f3c64a, 0 0 0 6px rgba(245, 198, 74, 0.25); }
-  100% { box-shadow: 0 0 0 0 rgba(245, 198, 74, 0); }
-}
-.item.flash { animation: flash 1.4s ease; }
 
 /* ===== Tag + Settings panels ===== */
 #tag-panel, #settings-panel { padding: 2px 2px 8px; }
@@ -412,28 +395,40 @@ html, body {
 .panel-back:hover { background: var(--hover); color: var(--hover-text); }
 .panel-title { font-size: 13px; font-weight: 700; }
 
-.tag-entry { margin-bottom: 4px; }
 .tag-row {
   width: 100%; display: flex; align-items: center; gap: 8px;
   padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius-sm);
   background: var(--item-bg); cursor: default;
   font-family: var(--font); font-size: 13px; font-weight: 600; color: var(--text);
 }
+.tag-row { margin-bottom: 4px; }
 .tag-row:hover { border-color: var(--item-border-hover); }
+.tag-row.active { border-color: var(--accent); background: var(--accent-soft); }
 .tname { color: var(--accent); }
 .tag-count {
   margin-left: auto; font-size: 10.5px; font-weight: 700;
   background: var(--count-bg); color: var(--count-text); padding: 1px 7px; border-radius: 99px;
 }
-.tchev { font-size: 9px; color: var(--label); transition: transform 0.15s; display: inline-block; }
-.tchev.open { transform: rotate(90deg); }
-.tag-todos { list-style: none; margin: 4px 0 8px; padding: 0 0 0 6px; display: flex; flex-direction: column; gap: 4px; }
-.tag-todo {
-  padding: 7px 11px; border-radius: 9px; background: var(--tagtodo-bg); border: 1px solid var(--line);
-  font-size: 12.5px; cursor: default; word-break: break-word;
+
+/* ===== Archive ===== */
+.archive-month {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--label); padding: 10px 2px 6px;
 }
-.tag-todo:hover { border-color: var(--tagtodo-hover-border); background: var(--tagtodo-hover-bg); }
-.tag-todo.is-done { color: var(--muted); text-decoration: line-through; }
+.archive-items { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.archive-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 11px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--item-bg); font-size: 12.5px; color: var(--muted-2);
+}
+.archive-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-restore {
+  flex: 0 0 auto; border: none; background: transparent; cursor: default;
+  font-family: var(--font); font-size: 11px; font-weight: 600; color: var(--accent);
+  padding: 3px 6px; border-radius: 6px; opacity: 0; transition: opacity 0.12s, background 0.12s;
+}
+.archive-item:hover .archive-restore { opacity: 1; }
+.archive-restore:hover { background: var(--accent-soft); }
 
 /* ===== Settings ===== */
 .setting-row {
@@ -511,3 +506,38 @@ html, body {
 .digest-row { display: flex; align-items: center; gap: 8px; }
 .digest-at { font-size: 12.5px; color: var(--muted); flex: 0 0 auto; }
 .digest-time { width: auto; flex: 0 0 auto; }
+
+/* ===== Tag filter ===== */
+.filter-bar {
+  display: flex; align-items: center; gap: 6px;
+  margin: 0 0 8px; padding: 6px 10px;
+  background: var(--accent-soft); border: 1px solid var(--form-border);
+  border-radius: var(--radius-sm);
+}
+.filter-chip { font-size: 12px; font-weight: 700; color: var(--accent); }
+.filter-clear {
+  margin-left: auto; border: none; background: transparent; cursor: default;
+  font-size: 15px; line-height: 1; color: var(--muted); padding: 0 3px; border-radius: 5px;
+}
+.filter-clear:hover { color: var(--danger); }
+.tag-pill.active { background: var(--accent); color: #fff; }
+
+/* ===== Done header ===== */
+.done-head { display: flex; align-items: center; gap: 6px; }
+.done-head .done-toggle { flex: 1 1 auto; }
+.done-archive {
+  flex: 0 0 auto; border: none; background: transparent; cursor: default;
+  font-family: var(--font); font-size: 10.5px; font-weight: 600; color: var(--muted);
+  padding: 4px 7px; border-radius: 6px; transition: background 0.12s, color 0.12s;
+}
+.done-archive:hover { background: var(--hover); color: var(--hover-text); }
+.done-archive:disabled { opacity: 0.6; }
+
+/* ===== Update badge on the settings gear ===== */
+.win-btn { position: relative; }
+.win-badge {
+  position: absolute; top: 4px; right: 4px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
+}

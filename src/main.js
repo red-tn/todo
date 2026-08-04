@@ -1,6 +1,7 @@
 // main.js — wires the window chrome, modules, and data flow together.
 import { load, subscribe, toggleDone, deleteTodo } from "./store.js";
-import { initRender, renderList, toggleTagPanel, toggleSettings } from "./render.js";
+import { initRender, renderList, toggleTagPanel, toggleSettings, toggleArchive } from "./render.js";
+import { initArchivePanel, renderArchive } from "./archive.js";
 import { initAddForm, openEdit } from "./addform.js";
 import { initTheme, getTheme, setTheme } from "./theme.js";
 import { initSync, subscribeStatus, setDbUrl, syncNow, describe } from "./sync.js";
@@ -24,6 +25,7 @@ function setDate() {
 
 function initWindowChrome() {
   document.getElementById("btn-tags").addEventListener("click", () => toggleTagPanel());
+  document.getElementById("btn-archive").addEventListener("click", () => toggleArchive());
   document.getElementById("btn-settings").addEventListener("click", () => toggleSettings());
   document.getElementById("btn-min").addEventListener("click", () => appWindow.minimize());
   document.getElementById("btn-close").addEventListener("click", () => appWindow.close());
@@ -84,6 +86,37 @@ function initSyncSettings() {
   });
 
   sync.addEventListener("click", () => syncNow());
+}
+
+/** Pull the archived list and hand it to the panel. */
+async function refreshArchive() {
+  try {
+    renderArchive(await invoke("archived_todos"));
+  } catch (err) {
+    console.error("archived_todos failed:", err);
+    renderArchive([]);
+  }
+}
+
+function initArchive() {
+  document.getElementById("btn-archive-done").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const n = await invoke("archive_all_done");
+      // Say what happened rather than silently emptying the Done section.
+      btn.textContent = n === 1 ? "1 archived" : `${n} archived`;
+      await load();
+      setTimeout(() => {
+        btn.textContent = "Archive all";
+      }, 2000);
+    } catch (err) {
+      console.error("archive_all_done failed:", err);
+      btn.textContent = "Failed";
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 async function initAutostartSetting() {
@@ -171,6 +204,22 @@ async function initDigestSettings() {
   });
 }
 
+/**
+ * Badge the settings gear when an update is waiting.
+ *
+ * Settings is where the Install button lives, so the dot points at its own
+ * action rather than just announcing something.
+ */
+function initUpdateBadge() {
+  const badge = document.getElementById("update-badge");
+  const gear = document.getElementById("btn-settings");
+  subscribeUpdate((s) => {
+    const waiting = s.state === "available";
+    badge.hidden = !waiting;
+    gear.title = waiting ? `Update available — v${s.availableVersion}` : "Settings";
+  });
+}
+
 function initUpdateSettings() {
   const line = document.getElementById("update-status");
   const dot = document.getElementById("update-dot");
@@ -217,8 +266,21 @@ initSyncSettings();
 initAutostartSetting();
 initDigestSettings();
 initUpdateSettings();
+initUpdateBadge();
 initAddForm();
-initRender({ onToggle: toggleDone, onDelete: deleteTodo, onEdit: openEdit });
+initArchive();
+initArchivePanel({
+  onRestore: async (id) => {
+    await invoke("restore_todo", { id });
+    await Promise.all([load(), refreshArchive()]);
+  },
+});
+initRender({
+  onToggle: toggleDone,
+  onDelete: deleteTodo,
+  onEdit: openEdit,
+  onOpenArchive: refreshArchive,
+});
 subscribe(renderList);
 load();
 initSync();

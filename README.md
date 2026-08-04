@@ -30,17 +30,127 @@ Deletes travel as tombstones rather than missing rows, so deleting on one
 machine doesn't get undone by the other machine's copy. Tombstones are cleaned
 up after 30 days.
 
+## Archive
+
+Completed tasks leave the working list 30 days after they were finished, moving
+to an **Archive** panel in the title bar where they stay searchable and can be
+restored. **Archive all** in the Done header clears the current backlog without
+waiting.
+
+Archived tasks stay in the database and keep syncing, so archiving on one
+machine archives on both. Nothing is deleted — restoring puts a task straight
+back in the list.
+
+## Filtering by tag
+
+Click a tag on any task to show only that tag; click it again, or the × in the
+filter bar, to clear. The Tags panel lists every tag with a count, and picking
+one applies the same filter.
+
+The filter is session-only and resets on restart. Sort mode persists because its
+effect is always visible; a filter left over from last session just looks like a
+list that lost its data.
+
+## Recurring tasks
+
+Set **Repeats** on a task — daily, weekly, monthly, or yearly, with an interval
+so "every 2 weeks" and "every 3 months" work.
+
+Completing a repeating task does not reopen it. The finished one stays in Done,
+preserving history, and a new task is created with the due date moved on. If you
+complete something long after it was due, the successor lands on the next
+occurrence still in the future rather than one that is already overdue.
+
+Month steps clamp to the end of the month, so 31 January plus one month is 28
+February (29 in a leap year) rather than sliding into March.
+
+## Daily digest
+
+One notification a day listing what is due today and what is overdue. Since
+tasks carry a due date and no time, there is no per-task moment to fire at, and
+a single daily summary is much harder to start ignoring than a stream of alerts.
+
+Settings are **per-machine, not synced** — a desktop that nags and a laptop that
+stays quiet is a reasonable setup. Enable it and set the time in Settings;
+default is 08:00. The Preview button sends one immediately, which is the only
+way to confirm notifications reach your desktop without waiting until morning.
+
+If the app was not running at the digest time, the digest fires the next time it
+starts that day. Late beats missed.
+
+With both machines running you will get the digest twice. That is deliberate:
+coordinating through the database would mean a digest fired on a sleeping laptop
+is never seen anywhere.
+
+## Tray and start on login
+
+The app lives in the system tray (menu bar on macOS). Closing the window hides
+it rather than quitting, so background sync and the daily digest keep working —
+**Quit in the tray menu is the only real exit**.
+
+The tray menu holds Show Todo, Sync now, Start on login, and Quit. Start on
+login is also in Settings, and launching that way starts the app hidden rather
+than throwing a window up on every boot.
+
+## Updates
+
+The app checks GitHub for a newer release on launch and offers it in Settings.
+It never installs or restarts on its own — a surprise restart would discard
+whatever you were mid-way through typing — so installing is always an explicit
+button press.
+
+Updates are signed. The app refuses anything that does not verify against the
+public key baked into `tauri.conf.json`, so a spoofed endpoint cannot push code
+to your machines.
+
+### Cutting a release
+
+```sh
+npm run release -- 0.2.0
+git push && git push origin v0.2.0
+```
+
+`npm run release` bumps the version in `package.json`, `package-lock.json`,
+`tauri.conf.json`, and `Cargo.toml` together, then commits and tags. They must
+agree: if the tag and `tauri.conf.json` disagree, the updater ignores the
+release without complaining.
+
+Pushing the tag triggers `.github/workflows/release.yml`, which builds Windows
+and a universal macOS binary, signs everything, and publishes a GitHub Release
+containing `latest.json` — the file installed apps poll.
+
+The release stays a **draft** until every platform has uploaded and a verify job
+has checked the manifest, then it is promoted. Publishing per-platform meant the
+manifest briefly advertised a version the slower platform had not built yet, and
+clients there errored.
+
+### Signing keys
+
+Generated once with `npm run tauri signer generate`. The **public** key lives in
+`tauri.conf.json`. The **private** key must exist in two places:
+
+- the `TAURI_SIGNING_PRIVATE_KEY` secret in the repository's Actions settings
+- a password manager
+
+**If the private key is lost, installed apps can never be updated again** —
+they only accept updates signed by the matching key, so every machine would need
+a manual reinstall. `*.key` is gitignored; keep it that way.
+
+### Development
+
+`npm run tauri dev` runs the app without bundling and reloads on frontend
+changes. Note that it runs a debug build, which is slower to start.
+
 ## Installation
 
 **Download a build from [Releases](https://github.com/red-tn/todo/releases/latest)** —
-CI publishes a Windows installer and macOS disk images (Apple Silicon and Intel)
-for every version. No toolchain required, and updates after that are in-app.
+CI publishes a Windows installer and a universal macOS disk image for every
+version. No toolchain required, and updates after that are in-app.
 
 | Platform | File |
 |---|---|
 | Windows | `Todo_<version>_x64-setup.exe` |
-| macOS (Apple Silicon) | `Todo_<version>_aarch64.dmg` |
-| macOS (Intel) | `Todo_<version>_x64.dmg` |
+| macOS (Apple Silicon and Intel) | `Todo_<version>_universal.dmg` |
 
 On macOS the app is unsigned, so the first launch needs **right-click → Open**
 rather than a double-click. See [macOS](#macos) below.
@@ -94,7 +204,7 @@ npm run tauri build
 The installer lands at:
 
 ```
-src-tauri/target/release/bundle/nsis/Todo_0.1.0_x64-setup.exe
+src-tauri/target/release/bundle/nsis/Todo_<version>_x64-setup.exe
 ```
 
 Run it. It installs per-user (no admin prompt) and adds *Todo* to the Start
@@ -128,7 +238,7 @@ npm run tauri build -- --target universal-apple-darwin
 The disk image lands at:
 
 ```
-src-tauri/target/release/bundle/dmg/Todo_0.1.0_aarch64.dmg
+src-tauri/target/release/bundle/dmg/Todo_<version>_universal.dmg
 ```
 
 Open it and drag **Todo** to Applications. The raw `.app` is also at
@@ -161,50 +271,6 @@ database. Whatever was in its local file beforehand is copied to
 `todos.local-backup-<timestamp>.json` in the app data directory first — nothing
 is thrown away.
 
-## Updates
-
-The app checks GitHub for a newer release on launch and offers it in Settings.
-It never installs or restarts on its own — a surprise restart would discard
-whatever you were mid-way through typing — so installing is always an explicit
-button press.
-
-Updates are signed. The app refuses anything that does not verify against the
-public key baked into `tauri.conf.json`, so a spoofed endpoint cannot push code
-to your machines.
-
-### Cutting a release
-
-```sh
-npm run release -- 0.2.0
-git push && git push origin v0.2.0
-```
-
-`npm run release` bumps the version in `package.json`, `package-lock.json`,
-`tauri.conf.json`, and `Cargo.toml` together, then commits and tags. They must
-agree: if the tag and `tauri.conf.json` disagree, the updater ignores the
-release without complaining.
-
-Pushing the tag triggers `.github/workflows/release.yml`, which builds Windows
-and macOS (Apple Silicon and Intel), signs everything, and publishes a GitHub
-Release containing `latest.json` — the file installed apps poll.
-
-### Signing keys
-
-Generated once with `npm run tauri signer generate`. The **public** key lives in
-`tauri.conf.json`. The **private** key must exist in two places:
-
-- the `TAURI_SIGNING_PRIVATE_KEY` secret in the repository's Actions settings
-- a password manager
-
-**If the private key is lost, installed apps can never be updated again** —
-they only accept updates signed by the matching key, so every machine would need
-a manual reinstall. `*.key` is gitignored; keep it that way.
-
-### Development
-
-`npm run tauri dev` runs the app without bundling and reloads on frontend
-changes. Note that it runs a debug build, which is slower to start.
-
 ## Where things live
 
 | What | Windows | macOS |
@@ -227,6 +293,7 @@ src/                    frontend (no build step — Tauri serves it directly)
   store.js              in-memory list + per-row persistence
   sync.js               sync status, the connection setting, refresh triggers
   update.js             update checks and the install-with-consent flow
+  archive.js            the archive panel
   render.js             sorting, due tiers, cards, tag panel
   addform.js            the add/edit form
   theme.js              light/dark/system
@@ -262,44 +329,3 @@ TODO_TEST_DATABASE_URL=<url> cargo test -- --ignored   # round-trip against a re
 ## Recommended IDE setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
-
-## Tray and start on login
-
-The app lives in the system tray (menu bar on macOS). Closing the window hides
-it rather than quitting, so background sync and the daily digest keep working —
-**Quit in the tray menu is the only real exit**.
-
-The tray menu holds Show Todo, Sync now, Start on login, and Quit. Start on
-login is also in Settings, and launching that way starts the app hidden rather
-than throwing a window up on every boot.
-
-## Daily digest
-
-One notification a day listing what is due today and what is overdue. Since
-tasks carry a due date and no time, there is no per-task moment to fire at, and
-a single daily summary is much harder to start ignoring than a stream of alerts.
-
-Settings are **per-machine, not synced** — a desktop that nags and a laptop that
-stays quiet is a reasonable setup. Enable it and set the time in Settings;
-default is 08:00. The Preview button sends one immediately, which is the only
-way to confirm notifications reach your desktop without waiting until morning.
-
-If the app was not running at the digest time, the digest fires the next time it
-starts that day. Late beats missed.
-
-With both machines running you will get the digest twice. That is deliberate:
-coordinating through the database would mean a digest fired on a sleeping laptop
-is never seen anywhere.
-
-## Recurring tasks
-
-Set **Repeats** on a task — daily, weekly, monthly, or yearly, with an interval
-so "every 2 weeks" and "every 3 months" work.
-
-Completing a repeating task does not reopen it. The finished one stays in Done,
-preserving history, and a new task is created with the due date moved on. If you
-complete something long after it was due, the successor lands on the next
-occurrence still in the future rather than one that is already overdue.
-
-Month steps clamp to the end of the month, so 31 January plus one month is 28
-February (29 in a leap year) rather than sliding into March.

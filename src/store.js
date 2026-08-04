@@ -49,16 +49,16 @@ async function persist(todo) {
   }
 }
 
-export function addTodo({ title, note, due, link, tags, refs, priority }) {
+export function addTodo({ title, note, due, tags, priority, recurrence, recurrenceInterval }) {
   const todo = {
     id: newId(),
     title: title.trim(),
     note: (note || "").trim(),
-    link: (link || "").trim() || null,
     tags: Array.isArray(tags) ? tags : [],
-    refs: Array.isArray(refs) ? refs : [],
     due: due || null,
     priority: priority || null,
+    recurrence: recurrence || null,
+    recurrenceInterval: recurrenceInterval || 1,
     done: false,
     createdAt: new Date().toISOString(),
   };
@@ -72,7 +72,6 @@ export function updateTodo(id, patch) {
   if (!t) return;
   if (typeof patch.title === "string") patch.title = patch.title.trim();
   if (typeof patch.note === "string") patch.note = patch.note.trim();
-  if (typeof patch.link === "string") patch.link = patch.link.trim() || null;
   Object.assign(t, patch);
   persist(t);
   emit();

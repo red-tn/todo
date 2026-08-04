@@ -17,7 +17,6 @@ use std::sync::Arc;
 use sync::{Status, SyncState};
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
-use tauri_plugin_opener::OpenerExt;
 
 /// Emitted whenever the sync status changes, so the settings panel can update
 /// without polling.
@@ -110,6 +109,40 @@ fn delete_todo(app: App, id: String) -> Result<(), String> {
             let now = Utc::now();
             t.deleted_at = Some(now);
             t.updated_at = Some(now);
+            t.dirty = true;
+        }
+    }
+    touch(&app, &st)
+}
+
+/// Completed tasks that have aged out of the working list.
+#[tauri::command]
+fn archived_todos(app: App) -> Vec<Todo> {
+    state(&app).archived_todos()
+}
+
+/// Archive every completed task now, without waiting for the age threshold.
+/// Returns how many moved, so the UI can say what happened.
+#[tauri::command]
+fn archive_all_done(app: App) -> Result<usize, String> {
+    let st = state(&app);
+    let n = {
+        let mut todos = st.todos.lock().unwrap();
+        sync::archive_completed(&mut todos, 0, Utc::now())
+    };
+    touch(&app, &st)?;
+    Ok(n)
+}
+
+/// Put an archived task back in the working list.
+#[tauri::command]
+fn restore_todo(app: App, id: String) -> Result<(), String> {
+    let st = state(&app);
+    {
+        let mut todos = st.todos.lock().unwrap();
+        if let Some(t) = todos.iter_mut().find(|t| t.id == id) {
+            t.archived_at = None;
+            t.updated_at = Some(Utc::now());
             t.dirty = true;
         }
     }
@@ -262,21 +295,12 @@ async fn install_update(app: App) -> Result<(), String> {
     update::install(&app).await
 }
 
-/// Open a URL in the user's default browser.
-#[tauri::command]
-fn open_link(app: App, url: String) -> Result<(), String> {
-    app.opener()
-        .open_url(url, None::<&str>)
-        .map_err(|e| e.to_string())
-}
-
 /* ---------- app setup ---------- */
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         // No custom target. macOS ships one universal binary, but tauri-action
         // publishes it under both `darwin-aarch64` and `darwin-x86_64` pointing
@@ -375,7 +399,9 @@ pub fn run() {
             preview_digest,
             check_update,
             install_update,
-            open_link
+            archived_todos,
+            archive_all_done,
+            restore_todo
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
