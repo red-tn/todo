@@ -77,9 +77,14 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Todo ${{ github.ref_name }}'
           releaseBody: 'Installed copies will offer this update from Settings.'
-          # Published immediately so the updater endpoint resolves; a draft
-          # release is not reachable by `releases/latest/download`.
-          releaseDraft: false
+          # Stay a draft until every platform has uploaded. Each job writes to
+          # the release as it finishes, so publishing immediately means the
+          # manifest advertises a new version while the slower platform's
+          # installer does not exist yet — clients on that platform see an
+          # update, fail to find their entry, and error. Drafts are not served
+          # by `releases/latest/download`, so clients keep seeing the previous
+          # complete release until the verify job promotes this one.
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
 
@@ -88,16 +93,22 @@ jobs:
   # machines on that platform quietly never see an update again. This turns
   # that into a failed build.
   verify:
-    name: Verify update manifest
+    name: Verify and publish
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check latest.json covers every platform
         run: |
           set -euo pipefail
-          url="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/latest.json"
-          echo "fetching $url"
-          curl -fsSL "$url" -o latest.json
+          # Fetched through the API rather than the public download URL,
+          # because the release is still a draft at this point.
+          gh release download "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --pattern latest.json --output latest.json --clobber
           cat latest.json
 
           # A universal macOS build is published under both architecture keys,
@@ -130,3 +141,14 @@ jobs:
             exit 1
           fi
           echo "manifest OK: version $version, platforms $(jq -r '.platforms | keys | join(", ")' latest.json)"
+
+      # Only now does the release become visible to installed apps. Everything
+      # is uploaded and the manifest is complete, so clients move straight from
+      # the previous good release to this one with no window in between.
+      - name: Publish the release
+        run: |
+          set -euo pipefail
+          gh release edit "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --draft=false --latest
+          echo "published ${{ github.ref_name }}"
