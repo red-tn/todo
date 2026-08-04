@@ -21,12 +21,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # One universal macOS build rather than separate arm64 and Intel jobs.
+          # Each job updates latest.json on the same release, so concurrent
+          # writers can clobber each other: that is how the Intel entry vanished
+          # from v0.2.0 while its .dmg uploaded fine. Fewer writers means a
+          # smaller window, and the verify job below turns any remaining loss
+          # into a failed build rather than a release that looks fine.
+          #
+          # A universal build is published under the `darwin-universal` key, so
+          # the updater plugin sets that target explicitly on macOS — by default
+          # it would look for darwin-aarch64/darwin-x86_64 and find nothing.
           - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
-            name: macOS (Apple Silicon)
-          - platform: macos-latest
-            args: '--target x86_64-apple-darwin'
-            name: macOS (Intel)
+            args: '--target universal-apple-darwin'
+            name: macOS (universal)
           - platform: windows-latest
             args: ''
             name: Windows
@@ -75,3 +82,47 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+  # A release whose manifest is missing a platform looks completely healthy:
+  # the installers upload, the run goes green, and the only symptom is that
+  # machines on that platform quietly never see an update again. This turns
+  # that into a failed build.
+  verify:
+    name: Verify update manifest
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check latest.json covers every platform
+        run: |
+          set -euo pipefail
+          url="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/latest.json"
+          echo "fetching $url"
+          curl -fsSL "$url" -o latest.json
+          cat latest.json
+
+          missing=0
+          for key in darwin-universal windows-x86_64; do
+            if ! jq -e --arg k "$key" '.platforms[$k]' latest.json >/dev/null; then
+              echo "::error::latest.json is missing platform '$key'"
+              missing=1
+            fi
+          done
+
+          # An entry with no signature is worse than a missing one: the app
+          # would download it and then refuse to install.
+          if jq -e '[.platforms[] | select((.signature // "") == "")] | length > 0' latest.json >/dev/null; then
+            echo "::error::latest.json contains an unsigned platform entry"
+            missing=1
+          fi
+
+          version=$(jq -r .version latest.json)
+          expected="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$expected" ]; then
+            echo "::error::latest.json says version '$version' but the tag is '$expected'"
+            missing=1
+          fi
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "manifest OK: version $version, platforms $(jq -r '.platforms | keys | join(", ")' latest.json)"
