@@ -278,16 +278,13 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
-        // macOS ships a single universal binary, which tauri-action publishes
-        // under the `darwin-universal` key. The updater otherwise looks for
-        // `darwin-aarch64` or `darwin-x86_64` based on the running architecture
-        // and would find nothing, so the target has to be set explicitly.
-        .plugin({
-            let builder = tauri_plugin_updater::Builder::new();
-            #[cfg(target_os = "macos")]
-            let builder = builder.target("darwin-universal");
-            builder.build()
-        })
+        // No custom target. macOS ships one universal binary, but tauri-action
+        // publishes it under both `darwin-aarch64` and `darwin-x86_64` pointing
+        // at the same archive — so the updater's default architecture lookup
+        // already resolves correctly. Setting a `darwin-universal` target here
+        // would look up a key that is never emitted, and updates would silently
+        // never be found.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         // Launching at login passes --hidden so the app starts quietly in the
         // tray instead of throwing a window up on every boot.

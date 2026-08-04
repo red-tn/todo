@@ -28,9 +28,9 @@ jobs:
           # smaller window, and the verify job below turns any remaining loss
           # into a failed build rather than a release that looks fine.
           #
-          # A universal build is published under the `darwin-universal` key, so
-          # the updater plugin sets that target explicitly on macOS — by default
-          # it would look for darwin-aarch64/darwin-x86_64 and find nothing.
+          # tauri-action lists a universal build under both darwin-aarch64 and
+          # darwin-x86_64, each pointing at the same archive, so the updater's
+          # default architecture lookup resolves without any custom target.
           - platform: macos-latest
             args: '--target universal-apple-darwin'
             name: macOS (universal)
@@ -100,8 +100,12 @@ jobs:
           curl -fsSL "$url" -o latest.json
           cat latest.json
 
+          # A universal macOS build is published under both architecture keys,
+          # each pointing at the same archive — there is no darwin-universal
+          # key. Checking the arch keys is what actually proves a Mac can find
+          # its update.
           missing=0
-          for key in darwin-universal windows-x86_64; do
+          for key in darwin-aarch64 darwin-x86_64 windows-x86_64; do
             if ! jq -e --arg k "$key" '.platforms[$k]' latest.json >/dev/null; then
               echo "::error::latest.json is missing platform '$key'"
               missing=1
