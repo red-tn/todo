@@ -482,3 +482,32 @@ html, body {
 .sync-dot.ok { background: var(--prio-low); }
 .sync-dot.offline { background: var(--prio-med); }
 .sync-dot.error { background: var(--danger); }
+
+/* ---------- recurrence ---------- */
+
+.recur-select {
+  font-family: var(--font); font-size: 12.5px; color: var(--text);
+  background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px;
+  padding: 6px 8px; outline: none;
+}
+.recur-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+.recur-every { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+.recur-interval {
+  width: 48px !important; text-align: center;
+  font-family: var(--font); font-size: 12.5px; color: var(--text);
+  background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px;
+  padding: 5px 4px; outline: none;
+}
+.recur-interval:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+
+/* Chip on a repeating task's card */
+.item-recur {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 5px; padding: 2px 7px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600;
+  background: var(--pill-bg); color: var(--pill-text);
+}
+
+.digest-row { display: flex; align-items: center; gap: 8px; }
+.digest-at { font-size: 12.5px; color: var(--muted); flex: 0 0 auto; }
+.digest-time { width: auto; flex: 0 0 auto; }

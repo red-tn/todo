@@ -67,6 +67,23 @@
             </div>
           </div>
 
+          <!-- Repeats: completing the task spawns the next one -->
+          <div class="prio-row">
+            <span class="prio-label">Repeats</span>
+            <select class="recur-select" id="f-recur">
+              <option value="">Never</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+            <span class="recur-every" id="f-recur-every" hidden>
+              every
+              <input class="recur-interval" id="f-recur-interval" type="number" min="1" max="99" value="1" />
+              <span id="f-recur-unit">months</span>
+            </span>
+          </div>
+
           <div class="add-row">
             <input class="add-date" id="f-due" type="date" />
             <div class="add-actions">
@@ -128,6 +145,14 @@
             </div>
           </div>
 
+          <div class="setting-row">
+            <span class="setting-label">Start on login</span>
+            <div class="segmented" id="autostart-seg">
+              <button type="button" data-autostart="off">Off</button>
+              <button type="button" data-autostart="on">On</button>
+            </div>
+          </div>
+
           <!-- Cloud sync: paste the Neon connection string once per machine -->
           <div class="setting-block">
             <div class="setting-block-head">
@@ -147,6 +172,25 @@
               <button type="button" class="btn-primary btn-sm" id="btn-dburl-save">Save</button>
             </div>
             <div class="sync-status" id="sync-status"></div>
+          </div>
+
+          <!-- Daily digest: one notification a day, settings are per-machine -->
+          <div class="setting-block">
+            <div class="setting-block-head">
+              <span class="setting-label">Daily digest</span>
+              <div class="segmented" id="digest-seg">
+                <button type="button" data-digest="off">Off</button>
+                <button type="button" data-digest="on">On</button>
+              </div>
+            </div>
+            <div class="digest-row">
+              <span class="digest-at">Notify at</span>
+              <input class="setting-input digest-time" id="f-digest-time" type="time" value="08:00" />
+            </div>
+            <div class="setting-actions">
+              <button type="button" class="btn-ghost btn-sm" id="btn-digest-preview">Preview</button>
+            </div>
+            <div class="sync-status" id="digest-status"></div>
           </div>
 
           <!-- Updates: checked on launch, installed only on request -->

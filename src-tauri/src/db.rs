@@ -27,7 +27,24 @@ create table if not exists todos (
   deleted_at timestamptz
 );
 create index if not exists todos_updated_at_idx on todos (updated_at);
+
+-- Added after the first release. `create table if not exists` above does
+-- nothing to an existing table, so new columns need their own statements.
+-- These are idempotent, so every machine self-migrates on first launch of a
+-- version that needs them.
+alter table todos add column if not exists recurrence text;
+alter table todos add column if not exists recurrence_interval integer not null default 1;
 "#;
+
+/// Columns to select, named explicitly.
+///
+/// Never `select *`: Postgres caches a prepared plan per connection, and adding
+/// a column changes what `*` expands to. A pooled connection that prepared the
+/// old shape then fails with "cached plan must not change result type" — which
+/// is exactly what happens on the first launch after a migration. Naming the
+/// columns keeps the result type stable when the table gains new ones.
+const COLUMNS: &str = "id, title, note, link, due, priority, done, tags, refs, \
+                       created_at, updated_at, deleted_at, recurrence, recurrence_interval";
 
 /// Open a pool. Fails fast so a bad credential surfaces as an error the user
 /// can see rather than a hang.
@@ -64,6 +81,11 @@ fn row_to_todo(row: &sqlx::postgres::PgRow) -> Result<Todo, String> {
         updated_at: Some(row.try_get("updated_at").map_err(|e| e.to_string())?),
         deleted_at: row.try_get("deleted_at").map_err(|e| e.to_string())?,
         dirty: false,
+        recurrence: row.try_get("recurrence").map_err(|e| e.to_string())?,
+        recurrence_interval: row
+            .try_get::<i32, _>("recurrence_interval")
+            .unwrap_or(1)
+            .max(1),
     })
 }
 
@@ -84,11 +106,17 @@ pub async fn pull(
         .map_err(|e| e.to_string())?;
 
     let rows = match since {
-        Some(ts) => sqlx::query("select * from todos where updated_at > $1")
-            .bind(ts)
-            .fetch_all(pool)
-            .await,
-        None => sqlx::query("select * from todos").fetch_all(pool).await,
+        Some(ts) => {
+            sqlx::query(&format!("select {COLUMNS} from todos where updated_at > $1"))
+                .bind(ts)
+                .fetch_all(pool)
+                .await
+        }
+        None => {
+            sqlx::query(&format!("select {COLUMNS} from todos"))
+                .fetch_all(pool)
+                .await
+        }
     }
     .map_err(|e| e.to_string())?;
 
@@ -114,20 +142,23 @@ pub async fn push(pool: &PgPool, todos: &[Todo]) -> Result<(), String> {
         sqlx::query(
             r#"
             insert into todos
-              (id, title, note, link, due, priority, done, tags, refs, created_at, updated_at, deleted_at)
-            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), $11)
+              (id, title, note, link, due, priority, done, tags, refs, created_at,
+               updated_at, deleted_at, recurrence, recurrence_interval)
+            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), $11, $12, $13)
             on conflict (id) do update set
-              title      = excluded.title,
-              note       = excluded.note,
-              link       = excluded.link,
-              due        = excluded.due,
-              priority   = excluded.priority,
-              done       = excluded.done,
-              tags       = excluded.tags,
-              refs       = excluded.refs,
-              created_at = excluded.created_at,
-              deleted_at = excluded.deleted_at,
-              updated_at = now()
+              title               = excluded.title,
+              note                = excluded.note,
+              link                = excluded.link,
+              due                 = excluded.due,
+              priority            = excluded.priority,
+              done                = excluded.done,
+              tags                = excluded.tags,
+              refs                = excluded.refs,
+              created_at          = excluded.created_at,
+              deleted_at          = excluded.deleted_at,
+              recurrence          = excluded.recurrence,
+              recurrence_interval = excluded.recurrence_interval,
+              updated_at          = now()
             "#,
         )
         .bind(&t.id)
@@ -141,6 +172,8 @@ pub async fn push(pool: &PgPool, todos: &[Todo]) -> Result<(), String> {
         .bind(&t.refs)
         .bind(t.created_at)
         .bind(t.deleted_at)
+        .bind(&t.recurrence)
+        .bind(t.recurrence_interval.max(1))
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
@@ -199,6 +232,8 @@ mod tests {
             updated_at: None,
             deleted_at: None,
             dirty: true,
+            recurrence: None,
+            recurrence_interval: 1,
         }
     }
 

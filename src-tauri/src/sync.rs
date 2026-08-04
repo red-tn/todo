@@ -441,6 +441,8 @@ mod tests {
             updated_at: Some(at(updated)),
             deleted_at: None,
             dirty: false,
+            recurrence: None,
+            recurrence_interval: 1,
         }
     }
 

@@ -13,6 +13,7 @@ import {
 } from "./update.js";
 
 const appWindow = window.__TAURI__.window.getCurrentWindow();
+const invoke = window.__TAURI__.core.invoke;
 
 function setDate() {
   const now = new Date();
@@ -85,6 +86,91 @@ function initSyncSettings() {
   sync.addEventListener("click", () => syncNow());
 }
 
+async function initAutostartSetting() {
+  const seg = document.getElementById("autostart-seg");
+  const buttons = Array.from(seg.querySelectorAll("button"));
+  const paint = (on) => {
+    for (const b of buttons) b.classList.toggle("active", (b.dataset.autostart === "on") === on);
+  };
+
+  let enabled = false;
+  try {
+    enabled = await invoke("get_autostart");
+  } catch (err) {
+    console.error("get_autostart failed:", err);
+  }
+  paint(enabled);
+
+  for (const b of buttons) {
+    b.addEventListener("click", async () => {
+      const want = b.dataset.autostart === "on";
+      try {
+        // Paint what actually took effect, not what was asked for — the OS can
+        // refuse, and a toggle that lies is worse than one that fails visibly.
+        paint(await invoke("set_autostart", { enabled: want }));
+      } catch (err) {
+        console.error("set_autostart failed:", err);
+        paint(!want);
+      }
+    });
+  }
+}
+
+async function initDigestSettings() {
+  const seg = document.getElementById("digest-seg");
+  const buttons = Array.from(seg.querySelectorAll("button"));
+  const time = document.getElementById("f-digest-time");
+  const preview = document.getElementById("btn-digest-preview");
+  const line = document.getElementById("digest-status");
+
+  const paint = (cfg) => {
+    for (const b of buttons) b.classList.toggle("active", (b.dataset.digest === "on") === cfg.enabled);
+    time.value = cfg.time;
+    time.disabled = !cfg.enabled;
+    preview.disabled = !cfg.enabled;
+    line.textContent = cfg.enabled
+      ? `One notification a day at ${cfg.time}, listing what's due and overdue.`
+      : "Off — no notifications from this machine.";
+  };
+
+  let cfg = { enabled: true, time: "08:00" };
+  try {
+    cfg = await invoke("get_digest_config");
+  } catch (err) {
+    console.error("get_digest_config failed:", err);
+  }
+  paint(cfg);
+
+  const save = async (next) => {
+    try {
+      paint(await invoke("set_digest_config", next));
+    } catch (err) {
+      line.textContent = `Could not save: ${err}`;
+      line.classList.add("is-error");
+    }
+  };
+
+  for (const b of buttons) {
+    b.addEventListener("click", () => save({ enabled: b.dataset.digest === "on", time: time.value }));
+  }
+  time.addEventListener("change", () => save({ enabled: true, time: time.value }));
+
+  // Proves notifications actually reach the desktop, which is otherwise only
+  // discoverable by waiting until tomorrow morning.
+  preview.addEventListener("click", async () => {
+    preview.disabled = true;
+    try {
+      line.textContent = await invoke("preview_digest");
+      line.classList.remove("is-error");
+    } catch (err) {
+      line.textContent = `Preview failed: ${err}`;
+      line.classList.add("is-error");
+    } finally {
+      preview.disabled = false;
+    }
+  });
+}
+
 function initUpdateSettings() {
   const line = document.getElementById("update-status");
   const dot = document.getElementById("update-dot");
@@ -128,6 +214,8 @@ setDate();
 initWindowChrome();
 initSettings();
 initSyncSettings();
+initAutostartSetting();
+initDigestSettings();
 initUpdateSettings();
 initAddForm();
 initRender({ onToggle: toggleDone, onDelete: deleteTodo, onEdit: openEdit });

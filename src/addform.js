@@ -5,6 +5,8 @@ let editingId = null;
 let formTags = [];
 let formRefs = [];
 let formPriority = ""; // "" | "low" | "med" | "high"
+let formRecur = ""; // "" | "daily" | "weekly" | "monthly" | "yearly"
+let formRecurInterval = 1;
 let commitTimer = null; // debounce handle for live edit-mode saves
 const els = {};
 
@@ -22,6 +24,10 @@ export function initAddForm() {
   els.refChips = document.getElementById("f-refs-chips");
   els.due = document.getElementById("f-due");
   els.prio = document.getElementById("f-prio");
+  els.recur = document.getElementById("f-recur");
+  els.recurEvery = document.getElementById("f-recur-every");
+  els.recurInterval = document.getElementById("f-recur-interval");
+  els.recurUnit = document.getElementById("f-recur-unit");
   els.prioBtns = Array.from(els.prio.querySelectorAll("button"));
   els.cancel = document.getElementById("f-cancel");
   els.save = document.getElementById("f-save");
@@ -49,6 +55,19 @@ export function initAddForm() {
       commitEditNow();
     });
   }
+
+  // Repeats: the interval control only matters once a unit is chosen.
+  els.recur.addEventListener("change", () => {
+    formRecur = els.recur.value;
+    renderRecur();
+    commitEditNow();
+  });
+  els.recurInterval.addEventListener("change", () => {
+    const n = parseInt(els.recurInterval.value, 10);
+    formRecurInterval = Number.isFinite(n) && n > 0 ? Math.min(n, 99) : 1;
+    els.recurInterval.value = String(formRecurInterval);
+    commitEditNow();
+  });
 
   // Start collapsed; prime the selects/suggestions for when it opens.
   resetFields();
@@ -199,6 +218,15 @@ function renderPriority() {
   }
 }
 
+/** Show the interval control only when the task actually repeats. */
+function renderRecur() {
+  els.recur.value = formRecur;
+  els.recurInterval.value = String(formRecurInterval);
+  els.recurEvery.hidden = !formRecur;
+  const plural = { daily: "days", weekly: "weeks", monthly: "months", yearly: "years" };
+  els.recurUnit.textContent = plural[formRecur] || "";
+}
+
 /* ---------- live edit-mode saves ---------- */
 
 /** Write the current form state back to the task being edited. No-op in add mode. */
@@ -212,6 +240,8 @@ function commitEdit() {
     tags: [...formTags],
     refs: [...formRefs],
     priority: formPriority || null,
+    recurrence: formRecur || null,
+    recurrenceInterval: formRecurInterval,
   });
 }
 
@@ -280,9 +310,12 @@ export function openEdit(todo) {
   formTags = [...(todo.tags || [])];
   formRefs = [...(todo.refs || [])];
   formPriority = todo.priority || "";
+  formRecur = todo.recurrence || "";
+  formRecurInterval = todo.recurrenceInterval || 1;
   renderTagChips();
   renderRefChips();
   renderPriority();
+  renderRecur();
   refreshTagSuggestions();
   refreshRefSelect();
   setMode("edit"); // auto-saves from here; Done just collapses
@@ -300,9 +333,12 @@ function resetFields() {
   formTags = [];
   formRefs = [];
   formPriority = "";
+  formRecur = "";
+  formRecurInterval = 1;
   renderTagChips();
   renderRefChips();
   renderPriority();
+  renderRecur();
   refreshTagSuggestions();
   refreshRefSelect();
 }
@@ -334,6 +370,8 @@ function onSubmit(e) {
     tags: [...formTags],
     refs: [...formRefs],
     priority: formPriority || null,
+    recurrence: formRecur || null,
+    recurrenceInterval: formRecurInterval,
   };
   if (editingId) {
     updateTodo(editingId, data);

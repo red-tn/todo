@@ -14,6 +14,41 @@ pub const ENV_VAR: &str = "TODO_DATABASE_URL";
 pub struct Config {
     #[serde(default)]
     pub database_url: Option<String>,
+    /// Daily digest settings. Deliberately per-machine rather than synced: a
+    /// desktop that nags and a laptop that stays quiet is a reasonable setup.
+    #[serde(default)]
+    pub digest: DigestConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DigestConfig {
+    pub enabled: bool,
+    /// Local time of day to notify, "HH:MM".
+    pub time: String,
+}
+
+impl Default for DigestConfig {
+    fn default() -> Self {
+        DigestConfig {
+            enabled: true,
+            time: "08:00".into(),
+        }
+    }
+}
+
+impl DigestConfig {
+    /// Parse `time` into (hour, minute), falling back to 08:00 if it is
+    /// malformed — a bad string should not silently disable the digest.
+    pub fn hour_minute(&self) -> (u32, u32) {
+        let mut parts = self.time.split(':');
+        let h = parts.next().and_then(|s| s.parse::<u32>().ok());
+        let m = parts.next().and_then(|s| s.parse::<u32>().ok());
+        match (h, m) {
+            (Some(h), Some(m)) if h < 24 && m < 60 => (h, m),
+            _ => (8, 0),
+        }
+    }
 }
 
 fn path(dir: &Path) -> PathBuf {
@@ -25,20 +60,40 @@ fn path(dir: &Path) -> PathBuf {
 /// `TODO_DATABASE_URL` wins when set and non-empty, so a machine can be pointed
 /// at a different database without touching the saved file.
 pub fn load(dir: &Path) -> Config {
+    let mut cfg = load_file(dir);
+    // Override only the URL: the environment says which database to use, not
+    // what the rest of the settings should be.
     if let Ok(url) = std::env::var(ENV_VAR) {
         if !url.trim().is_empty() {
-            return Config {
-                database_url: Some(url.trim().to_string()),
-            };
+            cfg.database_url = Some(url.trim().to_string());
         }
     }
+    cfg
+}
+
+/// Read, modify, and write the config in one step.
+///
+/// Callers must never construct a whole `Config` to change one field: doing so
+/// silently resets everything else in the file.
+pub fn update<F: FnOnce(&mut Config)>(dir: &Path, f: F) -> Result<Config, String> {
+    let mut cfg = load_file(dir);
+    f(&mut cfg);
+    save(dir, &cfg)?;
+    Ok(cfg)
+}
+
+/// The config exactly as stored, ignoring the environment override.
+///
+/// Saving must not bake a `TODO_DATABASE_URL` value into the file, so writes go
+/// through this rather than `load`.
+fn load_file(dir: &Path) -> Config {
     fs::read_to_string(path(dir))
         .ok()
         .and_then(|s| serde_json::from_str::<Config>(&s).ok())
         .unwrap_or_default()
 }
 
-/// Persist the connection string, readable only by the current user on Unix.
+/// Persist the config, readable only by the current user on Unix.
 pub fn save(dir: &Path, cfg: &Config) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let p = path(dir);

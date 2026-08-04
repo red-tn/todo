@@ -149,6 +149,16 @@ function displayLink(raw) {
   return raw.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "");
 }
 
+/* ---------- recurrence ---------- */
+
+/** "monthly" -> "monthly"; interval 2 -> "every 2 weeks". */
+function recurrenceLabel(t) {
+  const n = t.recurrenceInterval || 1;
+  if (n === 1) return t.recurrence;
+  const plural = { daily: "days", weekly: "weeks", monthly: "months", yearly: "years" };
+  return `every ${n} ${plural[t.recurrence] || t.recurrence}`;
+}
+
 /* ---------- card ---------- */
 
 function itemEl(t, byId) {
@@ -210,6 +220,14 @@ function itemEl(t, byId) {
     meta.innerHTML = '<span class="item-dot"></span><span class="item-meta-text"></span>';
     meta.querySelector(".item-meta-text").textContent = label;
     body.appendChild(meta);
+  }
+
+  if (t.recurrence) {
+    const chip = document.createElement("div");
+    chip.className = "item-recur";
+    chip.textContent = "↻ " + recurrenceLabel(t);
+    chip.title = "Completing this creates the next one";
+    body.appendChild(chip);
   }
 
   // Reference chips → jump to the referenced task

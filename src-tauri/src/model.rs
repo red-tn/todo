@@ -31,6 +31,14 @@ pub struct Todo {
     #[serde(default = "Utc::now")]
     pub created_at: DateTime<Utc>,
 
+    // ---- recurrence ----
+    /// "daily" | "weekly" | "monthly" | "yearly" | None for a one-off.
+    #[serde(default)]
+    pub recurrence: Option<String>,
+    /// Combines with `recurrence` to give "every 2 weeks". Always at least 1.
+    #[serde(default = "one")]
+    pub recurrence_interval: i32,
+
     // ---- sync metadata ----
     /// Last modification time. Set locally on edit, then replaced by the
     /// server's value once the row has been pushed.
@@ -47,6 +55,11 @@ pub struct Todo {
 
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+/// Default interval for caches written before recurrence existed.
+fn one() -> i32 {
+    1
 }
 
 impl Todo {

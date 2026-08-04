@@ -32,11 +32,30 @@ up after 30 days.
 
 ## Installation
 
+**Download a build from [Releases](https://github.com/red-tn/todo/releases/latest)** —
+CI publishes a Windows installer and macOS disk images (Apple Silicon and Intel)
+for every version. No toolchain required, and updates after that are in-app.
+
+| Platform | File |
+|---|---|
+| Windows | `Todo_<version>_x64-setup.exe` |
+| macOS (Apple Silicon) | `Todo_<version>_aarch64.dmg` |
+| macOS (Intel) | `Todo_<version>_x64.dmg` |
+
+On macOS the app is unsigned, so the first launch needs **right-click → Open**
+rather than a double-click. See [macOS](#macos) below.
+
+Everything after this point is for building from source, which you only need if
+you are changing the code.
+
+---
+
+## Building from source
+
 > **There is no cross-compilation.** Tauri produces a native binary linked
-> against each platform's SDK, so the Windows installer must be built on
-> Windows and the macOS app must be built on a Mac. Building one from the other
-> is not possible; each machine builds its own, or a macOS CI runner builds the
-> Mac one (see [Building the Mac app from CI](#building-the-mac-app-from-ci)).
+> against each platform's SDK, so the Windows installer must be built on Windows
+> and the macOS app on a Mac. That is why release builds run on CI, which has
+> both.
 
 Both platforms share the same first two steps.
 
@@ -186,13 +205,6 @@ a manual reinstall. `*.key` is gitignored; keep it that way.
 `npm run tauri dev` runs the app without bundling and reloads on frontend
 changes. Note that it runs a debug build, which is slower to start.
 
-### Building the Mac app from CI
-
-If you want a `.dmg` without building on a Mac, a GitHub Actions workflow using
-a `macos-latest` runner can produce one and attach it to a release. Be aware
-that GitHub bills macOS runner minutes at 10× the Linux rate, which consumes a
-private repository's included minutes quickly.
-
 ## Where things live
 
 | What | Windows | macOS |
@@ -214,6 +226,7 @@ read back a masked host, but no command returns the credential.
 src/                    frontend (no build step — Tauri serves it directly)
   store.js              in-memory list + per-row persistence
   sync.js               sync status, the connection setting, refresh triggers
+  update.js             update checks and the install-with-consent flow
   render.js             sorting, due tiers, cards, tag panel
   addform.js            the add/edit form
   theme.js              light/dark/system
@@ -221,23 +234,72 @@ src/                    frontend (no build step — Tauri serves it directly)
 src-tauri/src/
   lib.rs                Tauri commands and app wiring
   model.rs              the Todo record
-  config.rs             the connection string
-  db.rs                 Neon queries
+  config.rs             connection string and per-machine settings
+  db.rs                 Neon queries and schema migrations
   sync.rs               local cache and the merge
+  tray.rs               tray icon and its menu
+  notify.rs             the daily digest
+  recur.rs              recurrence date maths and spawning
+  update.rs             checking for and installing releases
 ```
 
 ## Tests
 
 ```sh
 cd src-tauri
-cargo test                                    # merge logic, URL masking, legacy file parsing
+cargo test                                    # merge logic, recurrence maths, digest, URL masking
 TODO_TEST_DATABASE_URL=<url> cargo test -- --ignored   # round-trip against a real database
 ```
 
-The integration tests only touch rows whose id starts with `zz-` (`zz-test-` for
-the query round-trips, `zz-sync-` for the end-to-end sync cases) and clean up
-after themselves, so they are safe to run against the live database.
+> **Point the integration tests at a scratch database, not your real one.**
+> They only touch rows prefixed `zz-` and clean up after themselves, but "clean
+> up" means a hard `delete`, and hard deletes do not propagate to clients —
+> only tombstones do. If the app is running against the same database while the
+> tests run, it will pull a test fixture into its local cache and then never
+> learn the row was removed. The fixture sits in your list until you delete it
+> by hand. Create a second Neon branch or database for testing.
 
 ## Recommended IDE setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+
+## Tray and start on login
+
+The app lives in the system tray (menu bar on macOS). Closing the window hides
+it rather than quitting, so background sync and the daily digest keep working —
+**Quit in the tray menu is the only real exit**.
+
+The tray menu holds Show Todo, Sync now, Start on login, and Quit. Start on
+login is also in Settings, and launching that way starts the app hidden rather
+than throwing a window up on every boot.
+
+## Daily digest
+
+One notification a day listing what is due today and what is overdue. Since
+tasks carry a due date and no time, there is no per-task moment to fire at, and
+a single daily summary is much harder to start ignoring than a stream of alerts.
+
+Settings are **per-machine, not synced** — a desktop that nags and a laptop that
+stays quiet is a reasonable setup. Enable it and set the time in Settings;
+default is 08:00. The Preview button sends one immediately, which is the only
+way to confirm notifications reach your desktop without waiting until morning.
+
+If the app was not running at the digest time, the digest fires the next time it
+starts that day. Late beats missed.
+
+With both machines running you will get the digest twice. That is deliberate:
+coordinating through the database would mean a digest fired on a sleeping laptop
+is never seen anywhere.
+
+## Recurring tasks
+
+Set **Repeats** on a task — daily, weekly, monthly, or yearly, with an interval
+so "every 2 weeks" and "every 3 months" work.
+
+Completing a repeating task does not reopen it. The finished one stays in Done,
+preserving history, and a new task is created with the due date moved on. If you
+complete something long after it was due, the successor lands on the next
+occurrence still in the future rather than one that is already overdue.
+
+Month steps clamp to the end of the month, so 31 January plus one month is 28
+February (29 in a leap year) rather than sliding into March.
