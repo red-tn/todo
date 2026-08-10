@@ -68,7 +68,30 @@ export function describeUpdate(s) {
   }
 }
 
-/** Check once at startup, quietly. */
+/**
+ * Check at startup, then keep checking quietly.
+ *
+ * The app lives in the tray for days, so a single launch-time check would
+ * miss every release published after it. Re-check on a slow interval and
+ * when the window regains focus (throttled — focus fires constantly).
+ */
+const RECHECK_MS = 6 * 60 * 60 * 1000; // 6 hours
+const FOCUS_THROTTLE_MS = 60 * 60 * 1000; // at most once an hour
+
 export async function initUpdates() {
+  let lastCheck = Date.now();
+  const recheck = () => {
+    lastCheck = Date.now();
+    checkForUpdate();
+  };
+
+  setInterval(recheck, RECHECK_MS);
+  window.addEventListener("focus", () => {
+    // Skip while a download is in flight or an update is already waiting —
+    // there is nothing new to learn and installing is the user's move.
+    if (status.state === "downloading" || status.state === "available") return;
+    if (Date.now() - lastCheck >= FOCUS_THROTTLE_MS) recheck();
+  });
+
   await checkForUpdate();
 }
