@@ -3,6 +3,7 @@ import { addTodo, updateTodo, getTodos } from "./store.js";
 
 let editingId = null;
 let formTags = [];
+let ddIndex = -1; // highlighted row in the tag dropdown, -1 = none
 let formPriority = ""; // "" | "low" | "med" | "high"
 let formRecur = ""; // "" | "daily" | "weekly" | "monthly" | "yearly"
 let formRecurInterval = 1;
@@ -17,7 +18,7 @@ export function initAddForm() {
   els.note = document.getElementById("f-note");
   els.tag = document.getElementById("f-tag");
   els.tagChips = document.getElementById("f-tags-chips");
-  els.tagSuggest = document.getElementById("tag-suggestions");
+  els.tagDd = document.getElementById("tag-dd");
   els.due = document.getElementById("f-due");
   els.prio = document.getElementById("f-prio");
   els.recur = document.getElementById("f-recur");
@@ -64,24 +65,41 @@ export function initAddForm() {
     commitEditNow();
   });
 
-  // Start collapsed; prime the selects/suggestions for when it opens.
+  // Start collapsed; prime the fields for when it opens.
   resetFields();
 
-  // Tag entry: Enter or comma commits the current token as a chip.
+  // Tag entry: the dropdown lists existing tags to pick; Enter or comma
+  // commits the typed token as a (possibly new) chip.
+  els.tag.addEventListener("focus", openTagDd);
+  els.tag.addEventListener("click", openTagDd);
+  els.tag.addEventListener("blur", closeTagDd);
+  els.tag.addEventListener("input", renderTagDd);
+  // Keep focus on the input while clicking inside the dropdown, so picking
+  // an item doesn't blur-close it mid-click.
+  els.tagDd.addEventListener("mousedown", (e) => e.preventDefault());
   els.tag.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === ",") {
+    const open = !els.tagDd.hidden;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      commitTagInput();
+      if (!open) return openTagDd();
+      const n = els.tagDd.children.length;
+      if (!n) return;
+      ddIndex = e.key === "ArrowDown" ? (ddIndex + 1) % n : (ddIndex - 1 + n) % n;
+      renderDdHighlight();
+    } else if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      const picked = open && ddIndex >= 0 ? els.tagDd.children[ddIndex] : null;
+      if (picked) addTag(picked.dataset.tag);
+      else commitTagInput();
+    } else if (e.key === "Escape" && open) {
+      e.stopPropagation(); // close only the dropdown, not the whole form
+      closeTagDd();
     } else if (e.key === "Backspace" && els.tag.value === "" && formTags.length) {
       formTags.pop();
       renderTagChips();
+      renderTagDd();
       commitEditNow();
     }
-  });
-  // Picking a datalist suggestion fires 'input'; commit it immediately.
-  els.tag.addEventListener("input", () => {
-    const opts = Array.from(els.tagSuggest.options).map((o) => o.value);
-    if (opts.includes(els.tag.value)) commitTagInput();
   });
 }
 
@@ -97,15 +115,19 @@ function allExistingTags() {
   return [...set].sort();
 }
 
-function commitTagInput() {
-  const tag = normalizeTag(els.tag.value);
-  els.tag.value = "";
+/** Add a normalized tag as a chip, clear the input, and refresh the dropdown. */
+function addTag(tag) {
   if (tag && !formTags.includes(tag)) {
     formTags.push(tag);
     renderTagChips();
-    refreshTagSuggestions();
     commitEditNow();
   }
+  els.tag.value = "";
+  renderTagDd();
+}
+
+function commitTagInput() {
+  addTag(normalizeTag(els.tag.value));
 }
 
 function renderTagChips() {
@@ -121,7 +143,7 @@ function renderTagChips() {
       x.addEventListener("click", () => {
         formTags = formTags.filter((t) => t !== tag);
         renderTagChips();
-        refreshTagSuggestions();
+        renderTagDd();
         commitEditNow();
       });
       chip.appendChild(x);
@@ -130,15 +152,39 @@ function renderTagChips() {
   );
 }
 
-function refreshTagSuggestions() {
-  const avail = allExistingTags().filter((t) => !formTags.includes(t));
-  els.tagSuggest.replaceChildren(
+function openTagDd() {
+  els.tagDd.hidden = false;
+  renderTagDd();
+}
+
+function closeTagDd() {
+  els.tagDd.hidden = true;
+  ddIndex = -1;
+}
+
+/** Rebuild the dropdown rows: existing tags not yet chosen, filtered by input. */
+function renderTagDd() {
+  if (els.tagDd.hidden) return;
+  const q = normalizeTag(els.tag.value);
+  const avail = allExistingTags().filter((t) => !formTags.includes(t) && (!q || t.includes(q)));
+  ddIndex = -1;
+  els.tagDd.replaceChildren(
     ...avail.map((t) => {
-      const o = document.createElement("option");
-      o.value = t;
-      return o;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "tag-dd-item";
+      row.dataset.tag = t;
+      row.textContent = `#${t}`;
+      row.addEventListener("click", () => addTag(t));
+      return row;
     })
   );
+}
+
+function renderDdHighlight() {
+  Array.from(els.tagDd.children).forEach((el, i) => el.classList.toggle("active", i === ddIndex));
+  const cur = els.tagDd.children[ddIndex];
+  if (cur) cur.scrollIntoView({ block: "nearest" });
 }
 
 /* ---------- priority ---------- */
@@ -242,7 +288,6 @@ export function openEdit(todo) {
   renderTagChips();
   renderPriority();
   renderRecur();
-  refreshTagSuggestions();
   setMode("edit"); // auto-saves from here; Done just collapses
   expand();
   els.title.focus();
@@ -261,7 +306,7 @@ function resetFields() {
   renderTagChips();
   renderPriority();
   renderRecur();
-  refreshTagSuggestions();
+  closeTagDd();
 }
 
 /** Cancel/Escape/Done: persist any pending edit, then collapse back to the toggle. */

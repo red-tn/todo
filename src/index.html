@@ -46,11 +46,11 @@
           <input class="add-title" id="f-title" type="text" placeholder="What needs doing?" autocomplete="off" />
           <textarea class="add-note" id="f-note" rows="2" placeholder="Note (optional)"></textarea>
 
-          <!-- Tags: type to search/reuse, Enter to add a chip -->
+          <!-- Tags: click to pick an existing tag, or type + Enter for a new one -->
           <div class="chip-field">
             <div class="chips" id="f-tags-chips"></div>
-            <input class="chip-input" id="f-tag" list="tag-suggestions" placeholder="# tag — type to search, Enter to add" autocomplete="off" />
-            <datalist id="tag-suggestions"></datalist>
+            <input class="chip-input" id="f-tag" placeholder="# tag — pick or type, Enter to add" autocomplete="off" />
+            <div class="tag-dd" id="tag-dd" hidden></div>
           </div>
 
           <!-- Priority: none / low / medium / high -->

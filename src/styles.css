@@ -202,7 +202,7 @@ html, body {
 .btn-ghost:hover { background: var(--accent-soft-hover); color: var(--hover-text); }
 
 /* tag chips in the form */
-.chip-field { display: flex; flex-direction: column; gap: 6px; }
+.chip-field { position: relative; display: flex; flex-direction: column; gap: 6px; }
 .chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .chips:empty { display: none; }
 .chip {
@@ -214,6 +214,24 @@ html, body {
 .tag-chip { color: var(--accent); border-color: var(--tag-chip-border); }
 .chip-x { border: none; background: transparent; cursor: default; font-size: 14px; line-height: 1; color: var(--label); padding: 0 1px; }
 .chip-x:hover { color: var(--danger); }
+
+/* dropdown of existing tags under the tag input */
+.tag-dd {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
+  display: flex; flex-direction: column;
+  max-height: 148px; overflow-y: auto;
+  padding: 4px; border-radius: 8px;
+  background: var(--input-bg); border: 1px solid var(--input-border);
+  box-shadow: 0 6px 18px var(--shadow);
+}
+.tag-dd:empty { display: none; }
+.tag-dd-item {
+  flex: 0 0 auto; text-align: left;
+  font-family: var(--font); font-size: 12px; font-weight: 600;
+  color: var(--accent); background: transparent;
+  border: none; border-radius: 6px; padding: 7px 9px; cursor: default;
+}
+.tag-dd-item:hover, .tag-dd-item.active { background: var(--accent-soft); }
 
 /* priority picker in the form */
 .prio-row { display: flex; align-items: center; gap: 10px; }
