@@ -203,8 +203,19 @@ fn set_digest_config(app: App, enabled: bool, time: String) -> Result<config::Di
     let dir = state(&app).dir.clone();
     let cfg = config::update(&dir, |c| {
         c.digest = config::DigestConfig { enabled, time };
+        c.settings_meta.digest.dirty = true;
     })?;
+    schedule_settings_sync(&app);
     Ok(cfg.digest)
+}
+
+/// Kick off a background sync so a settings edit reaches the other machine in
+/// seconds rather than waiting for the next todo change.
+fn schedule_settings_sync(app: &App) {
+    let handle = app.clone();
+    sync::schedule(state(app), move |status| {
+        let _ = handle.emit(STATUS_EVENT, status);
+    });
 }
 
 /// Send the digest right now regardless of schedule, so the Settings "Preview"
@@ -324,7 +335,9 @@ fn set_slack_config(
         if !url.is_empty() {
             c.slack.webhook_url = Some(url);
         }
+        c.settings_meta.slack.dirty = true;
     })?;
+    schedule_settings_sync(&app);
     Ok(slack_settings(&cfg.slack))
 }
 
@@ -393,15 +406,37 @@ fn spawn_slack_loop(app: App) {
                 continue;
             }
             let now = chrono::Local::now();
-            let mut due = false;
+            let mut due_slots: Vec<String> = Vec::new();
             for (i, (hour, minute)) in cfg.hours_minutes().into_iter().enumerate() {
                 if notify::should_fire(now, hour, minute, last_fired[i]) {
                     last_fired[i] = Some(now.date_naive());
-                    due = true;
+                    due_slots.push(format!("{hour:02}:{minute:02}"));
                 }
             }
-            if !due {
+            if due_slots.is_empty() {
                 continue;
+            }
+
+            // Only one machine may send each slot: whoever claims the
+            // (day, slot) row in the database first wins. With no database
+            // configured — or one that is briefly unreachable while Slack
+            // isn't — favor delivery over dedup.
+            let pool = { st.pool.read().await.clone() };
+            let mut send = false;
+            for slot in &due_slots {
+                match &pool {
+                    Some(p) => match db::claim_slack_slot(p, now.date_naive(), slot).await {
+                        Ok(claimed) => send = send || claimed,
+                        Err(e) => {
+                            eprintln!("slack slot claim failed, sending anyway: {e}");
+                            send = true;
+                        }
+                    },
+                    None => send = true,
+                }
+            }
+            if !send {
+                continue; // the other machine took this one
             }
 
             let message =

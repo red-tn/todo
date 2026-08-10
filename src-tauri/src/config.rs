@@ -3,6 +3,7 @@
 // The credential never reaches the webview. It is written to config.json in the
 // app data directory (0600 on Unix) and only ever leaves this process as a
 // masked host string via `mask_host`.
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,10 +19,36 @@ pub struct Config {
     /// desktop that nags and a laptop that stays quiet is a reasonable setup.
     #[serde(default)]
     pub digest: DigestConfig,
-    /// Slack alert settings. Per-machine for the same reason as the digest —
-    /// and running the app on two machines with this enabled posts twice.
+    /// Slack alert settings. Synced across machines through the database;
+    /// a `slack_fired` claims table keeps two online machines from both
+    /// posting the same digest.
     #[serde(default)]
     pub slack: SlackConfig,
+    /// Sync bookkeeping for the settings above. The stamps are server time
+    /// from the last push/pull, so two machines with drifting clocks still
+    /// agree on which edit is newer.
+    #[serde(default)]
+    pub settings_meta: SettingsMeta,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsMeta {
+    #[serde(default)]
+    pub digest: SettingMeta,
+    #[serde(default)]
+    pub slack: SettingMeta,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingMeta {
+    /// Server timestamp of the last time this setting was pushed or pulled.
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+    /// A local edit has not reached the database yet.
+    #[serde(default)]
+    pub dirty: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -23,6 +23,10 @@ import {
 const appWindow = window.__TAURI__.window.getCurrentWindow();
 const invoke = window.__TAURI__.core.invoke;
 
+// Settings can change underneath us now that they sync between machines;
+// each settings block registers a refresher that runs when the panel opens.
+const settingsRefreshers = [];
+
 function setDate() {
   const now = new Date();
   const wd = now.toLocaleDateString(undefined, { weekday: "short" });
@@ -34,7 +38,10 @@ function initWindowChrome() {
   document.getElementById("topbar-home").addEventListener("click", () => closeOverlay());
   document.getElementById("btn-tags").addEventListener("click", () => toggleTagPanel());
   document.getElementById("btn-archive").addEventListener("click", () => toggleArchive());
-  document.getElementById("btn-settings").addEventListener("click", () => toggleSettings());
+  document.getElementById("btn-settings").addEventListener("click", () => {
+    toggleSettings();
+    for (const refresh of settingsRefreshers) refresh();
+  });
   document.getElementById("btn-min").addEventListener("click", () => appWindow.minimize());
   document.getElementById("btn-close").addEventListener("click", () => appWindow.close());
 
@@ -181,6 +188,13 @@ async function initDigestSettings() {
     console.error("get_digest_config failed:", err);
   }
   paint(cfg);
+  settingsRefreshers.push(async () => {
+    try {
+      paint(await invoke("get_digest_config"));
+    } catch (err) {
+      console.error("get_digest_config failed:", err);
+    }
+  });
 
   const save = async (next) => {
     try {
@@ -256,6 +270,14 @@ async function initSlackSettings() {
     console.error("get_slack_config failed:", err);
   }
   paint();
+  settingsRefreshers.push(async () => {
+    try {
+      cfg = await invoke("get_slack_config");
+      paint();
+    } catch (err) {
+      console.error("get_slack_config failed:", err);
+    }
+  });
 
   const push = async (next) => {
     try {

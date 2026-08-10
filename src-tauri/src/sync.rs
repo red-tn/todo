@@ -323,6 +323,12 @@ pub async fn run_sync(state: &SyncState) -> Status {
 
     match sync_inner(state, &pool).await {
         Ok(outcome) => {
+            // Settings ride along with every successful sync. A failure here
+            // is logged, not surfaced: the todo sync already proved the
+            // connection works, and settings retry on the next run anyway.
+            if let Err(e) = sync_settings(state, &pool).await {
+                eprintln!("settings sync failed: {e}");
+            }
             state.set_state("ok", None);
             state.status.lock().unwrap().changed = outcome.changed;
             // Most polls are no-ops; skip rewriting the cache file when nothing
@@ -432,12 +438,107 @@ async fn sync_inner(state: &SyncState, pool: &PgPool) -> Result<Outcome, String>
             archived + purge_local_tombstones(&mut t)
         };
         let _ = db::purge_tombstones(pool).await;
+        let _ = db::purge_slack_fired(pool).await;
     }
 
     Ok(Outcome {
         changed,
         touched_todos: changed || pushed_any || swept > 0,
     })
+}
+
+/* ---------- shared settings ---------- */
+
+/// Fold the local slack config together with a remote one that is about to be
+/// adopted. Whole-value last-write-wins, with one exception: a remote row with
+/// no webhook URL never erases a URL this machine already has — a machine that
+/// saved settings before ever pasting the URL must not blank it everywhere.
+///
+/// Returns the value to adopt plus whether it still differs from the remote
+/// (in which case it must be marked dirty so the preserved URL propagates).
+pub fn merge_slack(
+    local: &config::SlackConfig,
+    mut remote: config::SlackConfig,
+) -> (config::SlackConfig, bool) {
+    let mut still_dirty = false;
+    if remote.webhook_url.is_none() && local.webhook_url.is_some() {
+        remote.webhook_url = local.webhook_url.clone();
+        still_dirty = true;
+    }
+    (remote, still_dirty)
+}
+
+/// Pull-and-push for the two synced settings, mirroring the todo merge:
+/// a dirty local value wins and gets pushed; otherwise the newer server
+/// stamp wins. A key missing remotely is pushed regardless of dirtiness so
+/// existing machines bootstrap the table on their first sync after upgrading.
+async fn sync_settings(state: &SyncState, pool: &PgPool) -> Result<(), String> {
+    let remote = db::pull_settings(pool).await?;
+    let local = config::load(&state.dir);
+
+    for key in ["digest", "slack"] {
+        let (local_json, meta) = match key {
+            "digest" => (
+                serde_json::to_string(&local.digest).map_err(|e| e.to_string())?,
+                local.settings_meta.digest.clone(),
+            ),
+            _ => (
+                serde_json::to_string(&local.slack).map_err(|e| e.to_string())?,
+                local.settings_meta.slack.clone(),
+            ),
+        };
+        let remote_row = remote.iter().find(|(k, _, _)| k == key);
+
+        if meta.dirty || remote_row.is_none() {
+            let stamp = db::push_setting(pool, key, &local_json).await?;
+            config::update(&state.dir, |c| {
+                let m = match key {
+                    "digest" => &mut c.settings_meta.digest,
+                    _ => &mut c.settings_meta.slack,
+                };
+                m.updated_at = Some(stamp);
+                m.dirty = false;
+            })?;
+            continue;
+        }
+
+        let Some((_, value, stamp)) = remote_row else { continue };
+        let newer = meta.updated_at.map_or(true, |local_ts| *stamp > local_ts);
+        if !newer || *value == local_json {
+            // Even when the value is identical, adopt the stamp so this
+            // comparison stops running every sync.
+            if newer {
+                config::update(&state.dir, |c| match key {
+                    "digest" => c.settings_meta.digest.updated_at = Some(*stamp),
+                    _ => c.settings_meta.slack.updated_at = Some(*stamp),
+                })?;
+            }
+            continue;
+        }
+
+        match key {
+            "digest" => {
+                let incoming: config::DigestConfig =
+                    serde_json::from_str(value).map_err(|e| e.to_string())?;
+                config::update(&state.dir, |c| {
+                    c.digest = incoming;
+                    c.settings_meta.digest.updated_at = Some(*stamp);
+                    c.settings_meta.digest.dirty = false;
+                })?;
+            }
+            _ => {
+                let incoming: config::SlackConfig =
+                    serde_json::from_str(value).map_err(|e| e.to_string())?;
+                let (merged, still_dirty) = merge_slack(&local.slack, incoming);
+                config::update(&state.dir, |c| {
+                    c.slack = merged;
+                    c.settings_meta.slack.updated_at = Some(*stamp);
+                    c.settings_meta.slack.dirty = still_dirty;
+                })?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Ask for a sync soon, coalescing a burst of edits into one run.
@@ -554,6 +655,48 @@ mod tests {
         merge(&mut local, vec![todo("a", "changed", 20)]);
         assert_eq!(local[0].title, "changed");
         assert_eq!(local[1].title, "keep too");
+    }
+
+    /* ---------- settings merge ---------- */
+
+    #[test]
+    fn adopting_remote_slack_settings_never_erases_a_local_webhook_url() {
+        let local = config::SlackConfig {
+            enabled: true,
+            webhook_url: Some("https://hooks.slack.com/triggers/x".into()),
+            thresholds: vec!["today".into()],
+            times: vec!["09:00".into()],
+        };
+        // The other machine saved settings before ever pasting a URL.
+        let remote = config::SlackConfig {
+            enabled: false,
+            webhook_url: None,
+            thresholds: vec!["week".into()],
+            times: vec!["08:00".into(), "17:00".into()],
+        };
+        let (merged, still_dirty) = merge_slack(&local, remote);
+        assert_eq!(merged.webhook_url, local.webhook_url, "URL must survive");
+        assert!(!merged.enabled, "everything else is last-write-wins");
+        assert_eq!(merged.times, vec!["08:00", "17:00"]);
+        assert!(still_dirty, "the preserved URL must be pushed back out");
+    }
+
+    #[test]
+    fn a_remote_webhook_url_replaces_the_local_one_cleanly() {
+        let local = config::SlackConfig {
+            enabled: true,
+            webhook_url: Some("https://hooks.slack.com/triggers/old".into()),
+            thresholds: vec!["today".into()],
+            times: vec!["09:00".into()],
+        };
+        let mut remote = local.clone();
+        remote.webhook_url = Some("https://hooks.slack.com/triggers/new".into());
+        let (merged, still_dirty) = merge_slack(&local, remote);
+        assert_eq!(
+            merged.webhook_url.as_deref(),
+            Some("https://hooks.slack.com/triggers/new")
+        );
+        assert!(!still_dirty, "a clean adoption needs no push back");
     }
 
     /* ---------- archiving ---------- */

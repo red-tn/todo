@@ -35,6 +35,21 @@ create index if not exists todos_updated_at_idx on todos (updated_at);
 alter table todos add column if not exists recurrence text;
 alter table todos add column if not exists recurrence_interval integer not null default 1;
 alter table todos add column if not exists archived_at timestamptz;
+
+-- Shared settings (digest, slack), one JSON blob per key, last write wins.
+create table if not exists settings (
+  key        text primary key,
+  value      text not null,
+  updated_at timestamptz not null default now()
+);
+
+-- Which machine sent the Slack digest for a given day and time slot. The
+-- first insert wins; everyone else sees a conflict and stays quiet.
+create table if not exists slack_fired (
+  fired_on date not null,
+  slot     text not null,
+  primary key (fired_on, slot)
+);
 "#;
 
 /// Columns to select, named explicitly.
@@ -180,6 +195,77 @@ pub async fn push(pool: &PgPool, todos: &[Todo]) -> Result<(), String> {
     tx.commit().await.map_err(|e| e.to_string())
 }
 
+/* ---------- shared settings ---------- */
+
+/// All settings rows. There are only two keys, so no watermark — always pull
+/// everything.
+pub async fn pull_settings(pool: &PgPool) -> Result<Vec<(String, String, DateTime<Utc>)>, String> {
+    let rows = sqlx::query("select key, value, updated_at from settings")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    rows.iter()
+        .map(|r| {
+            Ok((
+                r.try_get("key").map_err(|e: sqlx::Error| e.to_string())?,
+                r.try_get("value").map_err(|e: sqlx::Error| e.to_string())?,
+                r.try_get("updated_at").map_err(|e: sqlx::Error| e.to_string())?,
+            ))
+        })
+        .collect()
+}
+
+/// Upsert one setting, returning the server stamp so the local copy can
+/// record exactly when the shared truth last moved.
+pub async fn push_setting(
+    pool: &PgPool,
+    key: &str,
+    value: &str,
+) -> Result<DateTime<Utc>, String> {
+    sqlx::query(
+        r#"
+        insert into settings (key, value, updated_at) values ($1, $2, now())
+        on conflict (key) do update set value = excluded.value, updated_at = now()
+        returning updated_at
+        "#,
+    )
+    .bind(key)
+    .bind(value)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .try_get("updated_at")
+    .map_err(|e| e.to_string())
+}
+
+/// Try to claim the right to send the Slack digest for one (day, time slot).
+///
+/// Returns true only for the machine whose insert landed first; every other
+/// machine hits the conflict and returns false. This is the whole
+/// only-one-sends guarantee.
+pub async fn claim_slack_slot(
+    pool: &PgPool,
+    fired_on: NaiveDate,
+    slot: &str,
+) -> Result<bool, String> {
+    sqlx::query("insert into slack_fired (fired_on, slot) values ($1, $2) on conflict do nothing")
+        .bind(fired_on)
+        .bind(slot)
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+}
+
+/// Claims older than a week are history nobody will ever race on again.
+pub async fn purge_slack_fired(pool: &PgPool) -> Result<u64, String> {
+    sqlx::query("delete from slack_fired where fired_on < current_date - 7")
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected())
+        .map_err(|e| e.to_string())
+}
+
 /// Drop tombstones old enough that every machine has certainly seen them.
 pub async fn purge_tombstones(pool: &PgPool) -> Result<u64, String> {
     let cutoff = Utc::now() - chrono::Duration::days(TOMBSTONE_TTL_DAYS);
@@ -194,9 +280,10 @@ pub async fn purge_tombstones(pool: &PgPool) -> Result<u64, String> {
 /* ---------- integration tests ---------- */
 
 // These hit a real database. Set TODO_TEST_DATABASE_URL to run them:
-//   cargo test -- --ignored
-// They operate only on rows whose id starts with `zz-test-`, so a live list is
-// never touched.
+//   cargo test -- --ignored --test-threads=1
+// Single-threaded because every test runs the schema DDL, and concurrent DDL
+// on the same tables deadlocks in Postgres. They operate only on rows whose
+// id starts with `zz-test-`, so a live list is never touched.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,6 +400,45 @@ mod tests {
         assert!(got.is_deleted(), "delete must travel as a tombstone, not a missing row");
 
         cleanup(&pool).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn settings_round_trip_and_only_one_machine_claims_a_slot() {
+        let Some(url) = test_url() else { return };
+        let pool = connect(&url).await.expect("connect");
+        ensure_schema(&pool).await.expect("schema");
+        let _ = sqlx::query("delete from settings where key like 'zz-test-%'")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("delete from slack_fired where slot like 'zz-test-%'")
+            .execute(&pool)
+            .await;
+
+        // Settings upsert: second write wins and moves the stamp forward.
+        let t1 = push_setting(&pool, "zz-test-k", r#"{"a":1}"#).await.expect("push");
+        let t2 = push_setting(&pool, "zz-test-k", r#"{"a":2}"#).await.expect("push again");
+        assert!(t2 >= t1, "stamp must move forward");
+        let rows = pull_settings(&pool).await.expect("pull");
+        let (_, v, ts) = rows.iter().find(|(k, _, _)| k == "zz-test-k").expect("row");
+        assert_eq!(v, r#"{"a":2}"#);
+        assert_eq!(*ts, t2);
+
+        // The claim: two machines race for the same slot, exactly one wins.
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 8, 10).unwrap();
+        let first = claim_slack_slot(&pool, day, "zz-test-09:00").await.expect("claim");
+        let second = claim_slack_slot(&pool, day, "zz-test-09:00").await.expect("claim again");
+        assert!(first, "the first machine must win the slot");
+        assert!(!second, "the second machine must stay quiet");
+        // A different slot the same day is separate.
+        assert!(claim_slack_slot(&pool, day, "zz-test-17:00").await.expect("other slot"));
+
+        let _ = sqlx::query("delete from settings where key like 'zz-test-%'")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("delete from slack_fired where slot like 'zz-test-%'")
+            .execute(&pool)
+            .await;
     }
 
     #[tokio::test]

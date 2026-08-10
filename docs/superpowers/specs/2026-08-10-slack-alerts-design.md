@@ -74,7 +74,34 @@ cleared to remove), webhook URL password-style input with Save (masked
 placeholder saying a webhook is saved), and a Test button that reports
 success or the error inline.
 
+### Settings sync and single-sender dedup (amendment, same day)
+
+Digest and Slack settings now sync between machines through the database,
+mirroring the todo sync design:
+
+- A `settings` table (key → JSON value, server-stamped `updated_at`) holds
+  rows for `digest` and `slack`. Local `config.json` stays the offline copy,
+  with per-key `settingsMeta` (`updatedAt`, `dirty`) for last-write-wins
+  merging on server time. A dirty local value wins and is pushed; a missing
+  remote key is pushed to bootstrap; otherwise the newer stamp wins.
+- Exception in the merge: a remote slack value with no webhook URL never
+  erases a locally saved URL — the merged value keeps the URL and is marked
+  dirty so it propagates instead.
+- The database credential itself stays local only.
+- Settings edits schedule an immediate background sync; the settings panel
+  re-fetches when opened so synced values appear.
+- **Only one machine sends** even when both are online: a `slack_fired`
+  table keyed on (date, "HH:MM" slot) is claimed with an
+  insert-on-conflict-do-nothing before posting; only the machine whose
+  insert lands sends. Claims older than a week are purged. With no database
+  configured, or the claim unreachable, delivery is favored over dedup.
+- Desktop digest notifications still fire on each running machine — they
+  are per-device by nature; it is the settings that sync.
+
 ### Testing
 
-`cargo test` covers horizon bucketing and message text. Live verification
-via the Test button once the user's Slack workflow is published.
+`cargo test` covers bucket semantics, message text, and the URL-preserving
+settings merge. Integration tests (`cargo test -- --ignored
+--test-threads=1` with `TODO_TEST_DATABASE_URL`) cover the settings
+round-trip and the slot claim race. Live verification via the Test button
+once the user's Slack workflow is published.
