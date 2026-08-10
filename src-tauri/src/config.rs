@@ -18,6 +18,10 @@ pub struct Config {
     /// desktop that nags and a laptop that stays quiet is a reasonable setup.
     #[serde(default)]
     pub digest: DigestConfig,
+    /// Slack alert settings. Per-machine for the same reason as the digest —
+    /// and running the app on two machines with this enabled posts twice.
+    #[serde(default)]
+    pub slack: SlackConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -41,13 +45,62 @@ impl DigestConfig {
     /// Parse `time` into (hour, minute), falling back to 08:00 if it is
     /// malformed — a bad string should not silently disable the digest.
     pub fn hour_minute(&self) -> (u32, u32) {
-        let mut parts = self.time.split(':');
-        let h = parts.next().and_then(|s| s.parse::<u32>().ok());
-        let m = parts.next().and_then(|s| s.parse::<u32>().ok());
-        match (h, m) {
-            (Some(h), Some(m)) if h < 24 && m < 60 => (h, m),
-            _ => (8, 0),
+        parse_time(&self.time)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SlackConfig {
+    pub enabled: bool,
+    /// Incoming-webhook or Workflow Builder trigger URL. A secret like
+    /// `database_url`: stored here, never returned to the webview.
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    /// Independent due-date buckets, any combination of "today" | "tomorrow" |
+    /// "week" (= 2–7 days out). Empty means overdue tasks only.
+    #[serde(default = "default_thresholds")]
+    pub thresholds: Vec<String>,
+    /// One or two local times of day to post, "HH:MM".
+    #[serde(default = "default_times")]
+    pub times: Vec<String>,
+}
+
+fn default_thresholds() -> Vec<String> {
+    vec!["today".into()]
+}
+
+fn default_times() -> Vec<String> {
+    vec!["09:00".into()]
+}
+
+impl Default for SlackConfig {
+    fn default() -> Self {
+        SlackConfig {
+            enabled: false,
+            webhook_url: None,
+            thresholds: default_thresholds(),
+            times: default_times(),
         }
+    }
+}
+
+impl SlackConfig {
+    /// The configured send times as (hour, minute), capped at two.
+    pub fn hours_minutes(&self) -> Vec<(u32, u32)> {
+        self.times.iter().take(2).map(|t| parse_time(t)).collect()
+    }
+}
+
+/// Parse "HH:MM", falling back to 08:00 — a bad string should not silently
+/// disable a schedule.
+fn parse_time(time: &str) -> (u32, u32) {
+    let mut parts = time.split(':');
+    let h = parts.next().and_then(|s| s.parse::<u32>().ok());
+    let m = parts.next().and_then(|s| s.parse::<u32>().ok());
+    match (h, m) {
+        (Some(h), Some(m)) if h < 24 && m < 60 => (h, m),
+        _ => (8, 0),
     }
 }
 

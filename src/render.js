@@ -321,7 +321,7 @@ function setOverlay(name) {
   els.settingsPanel.hidden = name !== "settings";
   els.archivePanel.hidden = name !== "archive";
 }
-function closeOverlay() {
+export function closeOverlay() {
   setOverlay(null);
 }
 

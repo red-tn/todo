@@ -260,6 +260,161 @@ fn spawn_digest_loop(app: App) {
     });
 }
 
+/* ---------- slack alerts ---------- */
+
+/// Slack settings for the UI. The webhook URL never leaves the backend;
+/// `has_webhook` tells the settings panel whether one is saved.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SlackSettings {
+    enabled: bool,
+    thresholds: Vec<String>,
+    times: Vec<String>,
+    has_webhook: bool,
+}
+
+fn slack_settings(cfg: &config::SlackConfig) -> SlackSettings {
+    SlackSettings {
+        enabled: cfg.enabled,
+        thresholds: cfg.thresholds.clone(),
+        times: cfg.times.clone(),
+        has_webhook: cfg.webhook_url.is_some(),
+    }
+}
+
+#[tauri::command]
+fn get_slack_config(app: App) -> SlackSettings {
+    slack_settings(&config::load(&state(&app).dir).slack)
+}
+
+/// Save Slack settings. An empty `webhook_url` keeps the already-saved URL,
+/// so toggling other settings never requires re-pasting the secret.
+#[tauri::command]
+fn set_slack_config(
+    app: App,
+    enabled: bool,
+    thresholds: Vec<String>,
+    times: Vec<String>,
+    webhook_url: String,
+) -> Result<SlackSettings, String> {
+    let url = webhook_url.trim().to_string();
+    if !url.is_empty() && !url.starts_with("https://hooks.slack.com/") {
+        return Err("that does not look like a Slack webhook URL".into());
+    }
+    // Drop anything the UI shouldn't be able to send: unknown buckets, blank
+    // or extra times. At least one send time always survives.
+    let thresholds: Vec<String> = thresholds
+        .into_iter()
+        .filter(|t| matches!(t.as_str(), "today" | "tomorrow" | "week"))
+        .collect();
+    let mut times: Vec<String> = times
+        .into_iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .take(2)
+        .collect();
+    if times.is_empty() {
+        times.push("09:00".into());
+    }
+    let dir = state(&app).dir.clone();
+    let cfg = config::update(&dir, |c| {
+        c.slack.enabled = enabled;
+        c.slack.thresholds = thresholds;
+        c.slack.times = times;
+        if !url.is_empty() {
+            c.slack.webhook_url = Some(url);
+        }
+    })?;
+    Ok(slack_settings(&cfg.slack))
+}
+
+/// Post `{"text": ...}` to the webhook. Workflow Builder triggers need the
+/// workflow to define a text variable named `text`; classic incoming webhooks
+/// take this shape natively.
+async fn post_slack(url: &str, text: &str) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .post(url)
+        .json(&serde_json::json!({ "text": text }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    // Slack's body says why ("workflow_not_published", "invalid_token", …) —
+    // far more actionable than the bare status code.
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    Err(format!("{status}: {}", body.trim()))
+}
+
+/// Send the Slack digest right now, so the Test button can prove the webhook
+/// works without waiting for the schedule.
+#[tauri::command]
+async fn test_slack(app: App) -> Result<String, String> {
+    let (cfg, message) = {
+        let st = state(&app);
+        let cfg = config::load(&st.dir).slack;
+        let message = notify::build_slack_message(
+            &st.live_todos(),
+            chrono::Local::now().date_naive(),
+            &cfg.thresholds,
+        );
+        (cfg, message)
+    };
+    let Some(url) = cfg.webhook_url else {
+        return Err("no webhook URL saved yet".into());
+    };
+    let text = message.unwrap_or_else(|| "To Do: nothing due or overdue — test message.".into());
+    post_slack(&url, &text).await?;
+    Ok("Sent — check Slack.".into())
+}
+
+/// Check once a minute whether the Slack digest is due, mirroring
+/// `spawn_digest_loop`. Each configured time is its own slot with its own
+/// `last_fired`; when several slots come due in the same tick (the app was
+/// closed past both times), one catch-up post covers them all.
+fn spawn_slack_loop(app: App) {
+    tauri::async_runtime::spawn(async move {
+        let mut last_fired: [Option<chrono::NaiveDate>; 2] = [None, None];
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(notify::TICK_SECONDS)).await;
+
+            let st = state(&app);
+            let cfg = config::load(&st.dir).slack;
+            let Some(url) = cfg.webhook_url.clone() else {
+                continue;
+            };
+            if !cfg.enabled {
+                continue;
+            }
+            let now = chrono::Local::now();
+            let mut due = false;
+            for (i, (hour, minute)) in cfg.hours_minutes().into_iter().enumerate() {
+                if notify::should_fire(now, hour, minute, last_fired[i]) {
+                    last_fired[i] = Some(now.date_naive());
+                    due = true;
+                }
+            }
+            if !due {
+                continue;
+            }
+
+            let message =
+                notify::build_slack_message(&st.live_todos(), now.date_naive(), &cfg.thresholds);
+            if let Some(text) = message {
+                if let Err(e) = post_slack(&url, &text).await {
+                    eprintln!("slack post failed: {e}");
+                }
+            }
+        }
+    });
+}
+
 /* ---------- autostart ---------- */
 
 #[tauri::command]
@@ -358,6 +513,7 @@ pub fn run() {
             tray::build(app.handle(), autostart_on)?;
 
             spawn_digest_loop(app.handle().clone());
+            spawn_slack_loop(app.handle().clone());
 
             // Started by the login item: stay in the tray rather than stealing
             // focus during boot.
@@ -397,6 +553,9 @@ pub fn run() {
             get_digest_config,
             set_digest_config,
             preview_digest,
+            get_slack_config,
+            set_slack_config,
+            test_slack,
             check_update,
             install_update,
             archived_todos,

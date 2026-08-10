@@ -11,7 +11,7 @@
       <!-- Top bar: drag region + window controls -->
       <header class="topbar" data-tauri-drag-region>
         <div class="topbar-text" data-tauri-drag-region>
-          <span class="topbar-title" data-tauri-drag-region>To&nbsp;Do</span>
+          <span class="topbar-title" id="topbar-home" title="Back to list">To&nbsp;Do</span>
           <span class="topbar-date" id="topbar-date" data-tauri-drag-region></span>
         </div>
         <div class="win-controls">
@@ -210,6 +210,44 @@
               <button type="button" class="btn-ghost btn-sm" id="btn-digest-preview">Preview</button>
             </div>
             <div class="sync-status" id="digest-status"></div>
+          </div>
+
+          <!-- Slack alerts: one webhook post a day for due/overdue tasks -->
+          <div class="setting-block">
+            <div class="setting-block-head">
+              <span class="setting-label">Slack alerts</span>
+              <div class="segmented" id="slack-seg">
+                <button type="button" data-slack="off">Off</button>
+                <button type="button" data-slack="on">On</button>
+              </div>
+            </div>
+            <div class="digest-row">
+              <span class="digest-at">Due within</span>
+              <div class="segmented" id="slack-threshold-seg">
+                <button type="button" data-threshold="today">Today</button>
+                <button type="button" data-threshold="tomorrow">Tomorrow</button>
+                <button type="button" data-threshold="week">This week</button>
+              </div>
+            </div>
+            <div class="digest-row">
+              <span class="digest-at">Notify at</span>
+              <input class="setting-input digest-time" id="f-slack-time" type="time" value="09:00" />
+              <span class="digest-at">and</span>
+              <input class="setting-input digest-time" id="f-slack-time2" type="time" title="Optional second time — clear to remove" />
+            </div>
+            <input
+              class="setting-input"
+              id="f-slack-url"
+              type="password"
+              placeholder="https://hooks.slack.com/…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div class="setting-actions">
+              <button type="button" class="btn-ghost btn-sm" id="btn-slack-test">Test</button>
+              <button type="button" class="btn-primary btn-sm" id="btn-slack-save">Save</button>
+            </div>
+            <div class="sync-status" id="slack-status"></div>
           </div>
 
           <!-- Updates: checked on launch, installed only on request -->

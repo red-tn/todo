@@ -1,6 +1,13 @@
 // main.js — wires the window chrome, modules, and data flow together.
 import { load, subscribe, toggleDone, deleteTodo } from "./store.js";
-import { initRender, renderList, toggleTagPanel, toggleSettings, toggleArchive } from "./render.js";
+import {
+  initRender,
+  renderList,
+  toggleTagPanel,
+  toggleSettings,
+  toggleArchive,
+  closeOverlay,
+} from "./render.js";
 import { initArchivePanel, renderArchive } from "./archive.js";
 import { initAddForm, openEdit } from "./addform.js";
 import { initTheme, getTheme, setTheme } from "./theme.js";
@@ -24,6 +31,7 @@ function setDate() {
 }
 
 function initWindowChrome() {
+  document.getElementById("topbar-home").addEventListener("click", () => closeOverlay());
   document.getElementById("btn-tags").addEventListener("click", () => toggleTagPanel());
   document.getElementById("btn-archive").addEventListener("click", () => toggleArchive());
   document.getElementById("btn-settings").addEventListener("click", () => toggleSettings());
@@ -204,6 +212,96 @@ async function initDigestSettings() {
   });
 }
 
+async function initSlackSettings() {
+  const seg = document.getElementById("slack-seg");
+  const onOff = Array.from(seg.querySelectorAll("button"));
+  const thresholdSeg = document.getElementById("slack-threshold-seg");
+  const thresholds = Array.from(thresholdSeg.querySelectorAll("button"));
+  const time1 = document.getElementById("f-slack-time");
+  const time2 = document.getElementById("f-slack-time2");
+  const url = document.getElementById("f-slack-url");
+  const test = document.getElementById("btn-slack-test");
+  const save = document.getElementById("btn-slack-save");
+  const line = document.getElementById("slack-status");
+
+  let cfg = { enabled: false, thresholds: ["today"], times: ["09:00"], hasWebhook: false };
+
+  const bucketNames = { today: "today", tomorrow: "tomorrow", week: "this week" };
+  const paint = () => {
+    for (const b of onOff) b.classList.toggle("active", (b.dataset.slack === "on") === cfg.enabled);
+    for (const b of thresholds) {
+      b.classList.toggle("active", cfg.thresholds.includes(b.dataset.threshold));
+      b.disabled = !cfg.enabled;
+    }
+    time1.value = cfg.times[0] || "09:00";
+    time2.value = cfg.times[1] || "";
+    time1.disabled = !cfg.enabled;
+    time2.disabled = !cfg.enabled;
+    test.disabled = !cfg.hasWebhook;
+    // Like the DB URL: the secret never comes back, the placeholder just
+    // signals that one is saved.
+    url.placeholder = cfg.hasWebhook ? "Webhook saved — paste to replace" : "https://hooks.slack.com/…";
+    const chosen = cfg.thresholds.map((t) => bucketNames[t]).join(", ");
+    line.textContent = !cfg.hasWebhook
+      ? "Paste a Slack webhook or workflow trigger URL to get started."
+      : cfg.enabled
+        ? `Posts overdue tasks${chosen ? ` and tasks due ${chosen}` : " only"} at ${cfg.times.join(" and ")}.`
+        : "Off — nothing is sent to Slack from this machine.";
+    line.classList.remove("is-error");
+  };
+
+  try {
+    cfg = await invoke("get_slack_config");
+  } catch (err) {
+    console.error("get_slack_config failed:", err);
+  }
+  paint();
+
+  const push = async (next) => {
+    try {
+      cfg = await invoke("set_slack_config", {
+        enabled: next.enabled ?? cfg.enabled,
+        thresholds: next.thresholds ?? cfg.thresholds,
+        times: [time1.value, time2.value].filter(Boolean),
+        webhookUrl: url.value,
+      });
+      url.value = ""; // never keep the secret in the DOM
+      paint();
+    } catch (err) {
+      line.textContent = `Could not save: ${err}`;
+      line.classList.add("is-error");
+    }
+  };
+
+  for (const b of onOff) b.addEventListener("click", () => push({ enabled: b.dataset.slack === "on" }));
+  // Each bucket toggles independently — any combination is valid.
+  for (const b of thresholds) {
+    b.addEventListener("click", () => {
+      const t = b.dataset.threshold;
+      const next = cfg.thresholds.includes(t)
+        ? cfg.thresholds.filter((x) => x !== t)
+        : [...cfg.thresholds, t];
+      push({ thresholds: next });
+    });
+  }
+  time1.addEventListener("change", () => push({}));
+  time2.addEventListener("change", () => push({}));
+  save.addEventListener("click", () => push({}));
+
+  test.addEventListener("click", async () => {
+    test.disabled = true;
+    try {
+      line.textContent = await invoke("test_slack");
+      line.classList.remove("is-error");
+    } catch (err) {
+      line.textContent = `Test failed — ${err}`;
+      line.classList.add("is-error");
+    } finally {
+      test.disabled = !cfg.hasWebhook;
+    }
+  });
+}
+
 /**
  * Badge the settings gear when an update is waiting.
  *
@@ -265,6 +363,7 @@ initSettings();
 initSyncSettings();
 initAutostartSetting();
 initDigestSettings();
+initSlackSettings();
 initUpdateSettings();
 initUpdateBadge();
 initAddForm();

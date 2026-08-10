@@ -74,6 +74,69 @@ pub fn build_digest(todos: &[Todo], today: NaiveDate) -> Digest {
     Digest { due_today, overdue }
 }
 
+/// Build the Slack message: overdue tasks always, then tasks whose due date
+/// falls in a selected bucket — "today" (due today), "tomorrow" (due
+/// tomorrow), "week" (2–7 days out). Buckets are independent, so any
+/// combination works; an empty selection reports overdue tasks only.
+///
+/// Returns `None` when there is nothing to say — no message beats an empty one.
+pub fn build_slack_message(todos: &[Todo], today: NaiveDate, buckets: &[String]) -> Option<String> {
+    let has = |b: &str| buckets.iter().any(|s| s == b);
+    let mut overdue: Vec<(NaiveDate, &str)> = Vec::new();
+    let mut upcoming: Vec<(NaiveDate, &str)> = Vec::new();
+
+    for t in todos {
+        if t.done || t.is_deleted() || t.archived_at.is_some() {
+            continue;
+        }
+        let Some(due) = t.due.as_ref() else { continue };
+        let Ok(date) = NaiveDate::parse_from_str(due, "%Y-%m-%d") else {
+            continue;
+        };
+        let days = (date - today).num_days();
+        let wanted = match days {
+            i64::MIN..=-1 => {
+                overdue.push((date, &t.title));
+                continue;
+            }
+            0 => has("today"),
+            1 => has("tomorrow"),
+            2..=7 => has("week"),
+            _ => false,
+        };
+        if wanted {
+            upcoming.push((date, &t.title));
+        }
+    }
+    if overdue.is_empty() && upcoming.is_empty() {
+        return None;
+    }
+    overdue.sort();
+    upcoming.sort();
+
+    let mut parts = Vec::new();
+    if !overdue.is_empty() {
+        parts.push(format!("{} overdue", overdue.len()));
+    }
+    if !upcoming.is_empty() {
+        parts.push(format!("{} due soon", upcoming.len()));
+    }
+    let mut lines = vec![format!("To Do: {}", parts.join(" · "))];
+
+    for (date, title) in &overdue {
+        lines.push(format!("• {title} — overdue since {date}"));
+    }
+    for (date, title) in &upcoming {
+        let label = match (*date - today).num_days() {
+            0 => "due today".to_string(),
+            1 => "due tomorrow".to_string(),
+            _ => format!("due {}", date.format("%a %b %-d")),
+        };
+        lines.push(format!("• {title} — {label}"));
+    }
+    Some(lines.join("\n"))
+}
+
 /// Whether the digest should fire now.
 ///
 /// Firing late is deliberate: if the app was not running at the configured
@@ -170,6 +233,83 @@ mod tests {
         let body = d.body();
         assert!(body.starts_with("o1\no2"), "overdue must come first: {body}");
         assert!(body.contains("…and 1 more"));
+    }
+
+    fn buckets(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn slack_buckets_are_independent() {
+        let todos = vec![
+            todo("t-today", Some("2026-08-04"), false),
+            todo("t-tmrw", Some("2026-08-05"), false),
+            todo("t-friday", Some("2026-08-07"), false),
+        ];
+        // Only "tomorrow" selected: neither today's task nor Friday's appears.
+        let msg = build_slack_message(&todos, day("2026-08-04"), &buckets(&["tomorrow"])).unwrap();
+        assert!(msg.contains("t-tmrw — due tomorrow"));
+        assert!(!msg.contains("t-today"));
+        assert!(!msg.contains("t-friday"));
+        // "week" alone covers 2–7 days out, not today or tomorrow.
+        let msg = build_slack_message(&todos, day("2026-08-04"), &buckets(&["week"])).unwrap();
+        assert!(msg.contains("t-friday — due Fri Aug 7"));
+        assert!(!msg.contains("t-today"));
+        assert!(!msg.contains("t-tmrw"));
+    }
+
+    #[test]
+    fn slack_all_buckets_cover_the_week_but_not_beyond() {
+        let todos = vec![
+            todo("today", Some("2026-08-04"), false),
+            todo("tmrw", Some("2026-08-05"), false),
+            todo("in-a-week", Some("2026-08-11"), false),
+            todo("in-8-days", Some("2026-08-12"), false),
+        ];
+        let all = buckets(&["today", "tomorrow", "week"]);
+        let msg = build_slack_message(&todos, day("2026-08-04"), &all).unwrap();
+        assert!(msg.contains("today"));
+        assert!(msg.contains("tmrw"));
+        assert!(msg.contains("in-a-week"));
+        assert!(!msg.contains("in-8-days"));
+    }
+
+    #[test]
+    fn slack_always_includes_overdue_and_lists_it_first() {
+        let todos = vec![
+            todo("today", Some("2026-08-04"), false),
+            todo("late", Some("2026-08-01"), false),
+        ];
+        let msg = build_slack_message(&todos, day("2026-08-04"), &buckets(&["today"])).unwrap();
+        assert!(msg.starts_with("To Do: 1 overdue · 1 due soon"));
+        let late_pos = msg.find("late — overdue since 2026-08-01").unwrap();
+        let today_pos = msg.find("today — due today").unwrap();
+        assert!(late_pos < today_pos, "overdue must come first: {msg}");
+    }
+
+    #[test]
+    fn slack_empty_buckets_still_report_overdue() {
+        let todos = vec![
+            todo("late", Some("2026-08-01"), false),
+            todo("today", Some("2026-08-04"), false),
+        ];
+        let msg = build_slack_message(&todos, day("2026-08-04"), &[]).unwrap();
+        assert!(msg.contains("late"));
+        assert!(!msg.contains("due today"));
+    }
+
+    #[test]
+    fn slack_message_is_none_when_nothing_qualifies() {
+        let mut archived = todo("archived", Some("2026-08-04"), false);
+        archived.archived_at = Some(chrono::Utc::now());
+        let todos = vec![
+            todo("done", Some("2026-08-04"), true),
+            todo("far-future", Some("2026-12-01"), false),
+            todo("undated", None, false),
+            archived,
+        ];
+        let all = buckets(&["today", "tomorrow", "week"]);
+        assert_eq!(build_slack_message(&todos, day("2026-08-04"), &all), None);
     }
 
     #[test]

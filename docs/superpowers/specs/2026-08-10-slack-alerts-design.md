@@ -24,20 +24,25 @@ configured entirely in Settings.
 New `slack` block alongside `digest`, per-machine like the digest:
 
 ```json
-{ "enabled": false, "webhookUrl": null, "threshold": "today", "time": "09:00" }
+{ "enabled": false, "webhookUrl": null, "thresholds": ["today"], "times": ["09:00"] }
 ```
 
-- `threshold`: `"today" | "tomorrow" | "week"` — cumulative horizons
-  (today = due today; tomorrow = today + tomorrow; week = next 7 days).
+- `thresholds`: any combination of `"today" | "tomorrow" | "week"` —
+  independent buckets (today = due today; tomorrow = due tomorrow; week =
+  due 2–7 days out). Empty means overdue tasks only. *(Amended from a single
+  cumulative threshold at the user's request: any-or-all selection.)*
+- `times`: one or two "HH:MM" local times; the digest posts at each.
+  *(Amended from a single time.)* If the app was closed while both times
+  passed, the catch-up on launch sends one post, not two.
 - `webhookUrl` is a secret, treated exactly like `databaseUrl`: stored in
   `config.json`, never returned to the webview. The get-config command
   returns a `hasWebhook: bool` instead.
 
 ### Message building (`src-tauri/src/notify.rs`)
 
-`build_slack_digest(todos, today, horizon_days)`: overdue tasks always
-included and listed first, then live tasks due within the horizon
-(0 / 1 / 6 extra days). Skips done, deleted, archived, and undated tasks
+`build_slack_message(todos, today, buckets)`: overdue tasks always
+included and listed first, then live tasks whose due date falls in a
+selected bucket. Skips done, deleted, archived, and undated tasks
 like the desktop digest. Produces a single message string: a headline
 ("2 overdue · 3 due soon") followed by one line per task with its due date.
 Unit-tested alongside the existing digest tests.
@@ -63,8 +68,9 @@ variable named `text`.
 ### Settings UI (`src/index.html`, `src/main.js`)
 
 A "Slack alerts" block matching the existing blocks: on/off segmented
-control, threshold segmented control (Today / Tomorrow / This week),
-"Notify at" time input, webhook URL password-style input with Save (masked
+control, multi-select bucket toggles (Today / Tomorrow / This week — each
+toggles independently), two "Notify at" time inputs (second optional,
+cleared to remove), webhook URL password-style input with Save (masked
 placeholder saying a webhook is saved), and a Test button that reports
 success or the error inline.
 
